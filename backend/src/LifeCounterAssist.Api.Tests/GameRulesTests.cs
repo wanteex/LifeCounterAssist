@@ -6,148 +6,301 @@ public class GameRulesTests
 {
     private static readonly DateTimeOffset Now = new(2026, 1, 1, 20, 0, 0, TimeSpan.Zero);
 
-    [Fact]
-    public void Create_SeatsHostWithStartingLifeAndExcludesHostFromInvites()
-    {
-        var state = GameRules.Create("g", "ABCDE", Player("host"), 4, 40, ["host", "bob", "bob"], Now);
+    private static readonly (string Id, string Name)[] Seats =
+        [("p1", "Alice"), ("p2", "Bob"), ("p3", "Chloé"), ("p4", "Dan"), ("p5", "Eve"), ("p6", "Fay"), ("p7", "Gus"), ("p8", "Hal")];
 
-        Assert.Equal(40, state.Players.Single().Life);
-        Assert.Equal(["bob"], state.InvitedUserIds);
+    private static GameState NewGame(int players = 2)
+    {
+        var s = GameRules.Create("g", Seats[0].Id, Seats[0].Name, 40, Now);
+        for (var i = 1; i < players; i++) GameRules.Join(s, Seats[i].Id, Seats[i].Name, Now);
+        return s;
+    }
+
+    private static GameState Started(int players = 2)
+    {
+        var s = NewGame(players);
+        GameRules.Start(s, "p1", Now);
+        return s;
+    }
+
+    private static void Kill(GameState s, string id, DateTimeOffset now) => GameRules.AdjustLife(s, "p1", id, -40, now);
+
+    [Theory]
+    [InlineData(19)]
+    [InlineData(41)]
+    [InlineData(0)]
+    public void Create_RejectsStartingLifeOutsideAllowedValues(int life)
+    {
+        var ex = Assert.Throws<DomainException>(() => GameRules.Create("g", "p1", "Alice", life, Now));
+        Assert.Equal("invalid_starting_life", ex.Code);
     }
 
     [Theory]
-    [InlineData(1)]
-    [InlineData(9)]
-    public void Create_RejectsInvalidPlayerCount(int maxPlayers)
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData("123456789012345678901")]
+    public void Create_RejectsInvalidName(string name)
     {
-        var ex = Assert.Throws<DomainException>(() => GameRules.Create("g", "C", Player("host"), maxPlayers, 40, [], Now));
-        Assert.Equal("invalid_player_count", ex.Code);
+        var ex = Assert.Throws<DomainException>(() => GameRules.Create("g", "p1", name, 40, Now));
+        Assert.Equal("invalid_name", ex.Code);
     }
 
     [Fact]
-    public void Join_RejectsWhenFull()
+    public void Create_TrimsNameAndSeatsHostWithStartingLife()
     {
-        var state = GameRules.Create("g", "C", Player("host"), 2, 40, [], Now);
-        GameRules.Join(state, Player("p2"), Now);
+        var s = GameRules.Create("g", "p1", "  Alice ", 40, Now);
 
-        var ex = Assert.Throws<DomainException>(() => GameRules.Join(state, Player("p3"), Now));
+        var host = Assert.Single(s.Players);
+        Assert.Equal("Alice", host.DisplayName);
+        Assert.Equal(40, host.Life);
+        Assert.Equal("p1", s.HostPlayerId);
+    }
+
+    [Fact]
+    public void Join_SameNameDifferentCase_ReclaimsExistingSeat()
+    {
+        var s = NewGame();
+
+        var (player, reclaimed) = GameRules.Join(s, "pX", "alice", Now);
+
+        Assert.Equal("p1", player.PlayerId);
+        Assert.True(reclaimed);
+        Assert.Equal(2, s.Players.Count);
+    }
+
+    [Fact]
+    public void Join_ReclaimWorksWhileInProgress()
+    {
+        var s = Started();
+
+        var (player, reclaimed) = GameRules.Join(s, "pX", "BOB", Now);
+
+        Assert.Equal("p2", player.PlayerId);
+        Assert.True(reclaimed);
+    }
+
+    [Fact]
+    public void Join_NewNameWhileInProgress_Throws()
+    {
+        var s = Started();
+        var ex = Assert.Throws<DomainException>(() => GameRules.Join(s, "p9", "Zed", Now));
+        Assert.Equal("game_already_started", ex.Code);
+    }
+
+    [Fact]
+    public void Join_NinthPlayer_Throws()
+    {
+        var s = NewGame(8);
+        var ex = Assert.Throws<DomainException>(() => GameRules.Join(s, "p9", "Zed", Now));
         Assert.Equal("game_full", ex.Code);
     }
 
     [Fact]
-    public void Join_RemovesInvitation()
+    public void Join_FinishedGame_Throws()
     {
-        var state = GameRules.Create("g", "C", Player("host"), 4, 40, ["p2"], Now);
-
-        GameRules.Join(state, Player("p2"), Now);
-
-        Assert.Empty(state.InvitedUserIds);
-        Assert.Equal(40, state.FindPlayer("p2")!.Life);
+        var s = Started();
+        GameRules.Finish(s, "p1", Now);
+        var ex = Assert.Throws<DomainException>(() => GameRules.Join(s, "pX", "Alice", Now));
+        Assert.Equal("game_over", ex.Code);
     }
 
     [Fact]
-    public void Start_IsHostOnly()
+    public void Join_CancelledGame_Throws()
     {
-        var state = TwoPlayerLobby();
-
-        Assert.Throws<ForbiddenException>(() => GameRules.Start(state, "p2", Now));
+        var s = NewGame();
+        GameRules.Cancel(s, "p1", Now);
+        var ex = Assert.Throws<DomainException>(() => GameRules.Join(s, "pX", "Alice", Now));
+        Assert.Equal("game_over", ex.Code);
     }
 
     [Fact]
-    public void AdjustLife_RequiresGameInProgress()
+    public void Start_RequiresHostAndTwoPlayers()
     {
-        var state = TwoPlayerLobby();
+        var s = NewGame();
+        Assert.Throws<ForbiddenException>(() => GameRules.Start(s, "p2", Now));
 
-        var ex = Assert.Throws<DomainException>(() => GameRules.AdjustLife(state, "host", "p2", -1, Now));
+        var solo = NewGame(1);
+        var ex = Assert.Throws<DomainException>(() => GameRules.Start(solo, "p1", Now));
+        Assert.Equal("not_enough_players", ex.Code);
+    }
+
+    [Fact]
+    public void Cancel_ByHostInLobby_SetsCancelled()
+    {
+        var s = NewGame();
+        var later = Now.AddMinutes(1);
+
+        GameRules.Cancel(s, "p1", later);
+
+        Assert.Equal(GameStatus.Cancelled, s.Status);
+        Assert.Equal(later, s.FinishedAt);
+    }
+
+    [Fact]
+    public void Leave_HostCannotLeave()
+    {
+        var s = NewGame();
+        var ex = Assert.Throws<DomainException>(() => GameRules.Leave(s, "p1", Now));
+        Assert.Equal("host_cannot_leave", ex.Code);
+    }
+
+    [Fact]
+    public void CommanderDamage_AlsoReducesLife()
+    {
+        var s = Started();
+
+        GameRules.AdjustCommanderDamage(s, "p1", "p1", "p2", 5, Now);
+
+        var p1 = s.FindPlayer("p1")!;
+        Assert.Equal(5, p1.CommanderDamage["p2"]);
+        Assert.Equal(35, p1.Life);
+    }
+
+    [Fact]
+    public void Poison_NeverBelowZero()
+    {
+        var s = Started();
+        GameRules.AdjustPoison(s, "p1", "p2", -3, Now);
+        Assert.Equal(0, s.FindPlayer("p2")!.Poison);
+    }
+
+    [Fact]
+    public void LastPlayerStanding_StartsTenSecondCountdown()
+    {
+        var s = Started();
+
+        Kill(s, "p2", Now);
+
+        Assert.Equal("p1", s.PendingWinnerPlayerId);
+        Assert.Equal(Now.AddSeconds(10), s.PendingFinishAt);
+        Assert.Equal(GameStatus.InProgress, s.Status);
+    }
+
+    [Fact]
+    public void Healing_DuringCountdown_CancelsIt()
+    {
+        var s = Started();
+        Kill(s, "p2", Now);
+
+        GameRules.AdjustLife(s, "p1", "p2", 1, Now);
+
+        Assert.Null(s.PendingWinnerPlayerId);
+        Assert.Null(s.PendingFinishAt);
+    }
+
+    [Fact]
+    public void CompletePendingFinish_BeforeDeadline_DoesNothing()
+    {
+        var s = Started();
+        Kill(s, "p2", Now);
+
+        Assert.False(GameRules.CompletePendingFinish(s, Now.AddSeconds(9)));
+        Assert.Equal(GameStatus.InProgress, s.Status);
+    }
+
+    [Fact]
+    public void CompletePendingFinish_AtDeadline_FinishesWithWinner()
+    {
+        var s = Started();
+        Kill(s, "p2", Now);
+
+        Assert.True(GameRules.CompletePendingFinish(s, Now.AddSeconds(10)));
+        Assert.Equal(GameStatus.Finished, s.Status);
+        Assert.Equal("p1", s.WinnerPlayerId);
+        Assert.Null(s.PendingFinishAt);
+    }
+
+    [Fact]
+    public void CancelPendingFinish_ThenUnrelatedChange_DoesNotRestart()
+    {
+        var s = Started(3);
+        Kill(s, "p2", Now);
+        Kill(s, "p3", Now);
+        Assert.Equal("p1", s.PendingWinnerPlayerId);
+
+        GameRules.CancelPendingFinish(s, "p1", Now);
+        GameRules.AdjustLife(s, "p1", "p1", -1, Now);
+
+        Assert.Null(s.PendingWinnerPlayerId);
+        Assert.Null(s.PendingFinishAt);
+    }
+
+    [Fact]
+    public void CancelPendingFinish_ThenSurvivorChanges_Restarts()
+    {
+        var s = Started(3);
+        Kill(s, "p2", Now);
+        Kill(s, "p3", Now);
+        GameRules.CancelPendingFinish(s, "p1", Now);
+
+        GameRules.AdjustLife(s, "p1", "p2", 40, Now);
+        Assert.Null(s.PendingWinnerPlayerId);
+
+        var later = Now.AddSeconds(3);
+        Kill(s, "p2", later);
+
+        Assert.Equal("p1", s.PendingWinnerPlayerId);
+        Assert.Equal(later.AddSeconds(10), s.PendingFinishAt);
+    }
+
+    [Fact]
+    public void AllPlayersDead_NoCountdown()
+    {
+        var s = Started();
+        Kill(s, "p1", Now);
+        Kill(s, "p2", Now);
+
+        Assert.Null(s.PendingWinnerPlayerId);
+        Assert.Null(s.PendingFinishAt);
+    }
+
+    [Fact]
+    public void ManualFinish_HasNoWinner()
+    {
+        var s = Started();
+        Kill(s, "p2", Now);
+
+        GameRules.Finish(s, "p1", Now);
+
+        Assert.Equal(GameStatus.Finished, s.Status);
+        Assert.Null(s.WinnerPlayerId);
+        Assert.Null(s.PendingWinnerPlayerId);
+    }
+
+    [Fact]
+    public void AdjustLife_AfterFinish_Throws()
+    {
+        var s = Started();
+        GameRules.Finish(s, "p1", Now);
+        var ex = Assert.Throws<DomainException>(() => GameRules.AdjustLife(s, "p1", "p2", -1, Now));
         Assert.Equal("game_not_in_progress", ex.Code);
     }
 
     [Fact]
-    public void CommanderDamage_AlsoReducesLifeAndEliminatesAt21()
+    public void EveryMutation_UpdatesLastActivityAt()
     {
-        var state = StartedGame();
+        var s = NewGame();
+        var t = Now;
+        void Step(Action<DateTimeOffset> act)
+        {
+            t = t.AddSeconds(1);
+            var v = s.Version;
+            act(t);
+            Assert.Equal(t, s.LastActivityAt);
+            Assert.True(s.Version > v);
+        }
 
-        GameRules.AdjustCommanderDamage(state, "host", "p2", "host", 20, Now);
-        var target = state.FindPlayer("p2")!;
-        Assert.Equal(20, target.Life);
-        Assert.False(target.IsEliminated);
+        Step(n => GameRules.Join(s, "p3", "Chloé", n));
+        Step(n => GameRules.Leave(s, "p3", n));
+        Step(n => GameRules.Start(s, "p1", n));
+        Step(n => GameRules.AdjustLife(s, "p1", "p1", -1, n));
+        Step(n => GameRules.AdjustCommanderDamage(s, "p1", "p1", "p2", 1, n));
+        Step(n => GameRules.AdjustPoison(s, "p1", "p1", 1, n));
+        Step(n => GameRules.ToggleConcede(s, "p1", "p2", n));
+        Step(n => GameRules.Finish(s, "p1", n));
 
-        GameRules.AdjustCommanderDamage(state, "host", "p2", "host", 1, Now);
-        Assert.Equal(19, target.Life);
-        Assert.True(target.IsEliminated);
-        Assert.Equal("host", GameRules.SuggestWinner(state));
-    }
-
-    [Fact]
-    public void CommanderDamage_UndoCannotGoBelowZeroAndRestoresOnlyAppliedLife()
-    {
-        var state = StartedGame();
-        GameRules.AdjustCommanderDamage(state, "host", "p2", "host", 3, Now);
-
-        GameRules.AdjustCommanderDamage(state, "host", "p2", "host", -5, Now);
-
-        var target = state.FindPlayer("p2")!;
-        Assert.Equal(0, target.CommanderDamage["host"]);
-        Assert.Equal(40, target.Life);
-    }
-
-    [Fact]
-    public void CommanderDamage_RejectsSelfSource()
-    {
-        var state = StartedGame();
-
-        Assert.Throws<DomainException>(() => GameRules.AdjustCommanderDamage(state, "host", "p2", "p2", 1, Now));
-    }
-
-    [Fact]
-    public void AdjustCounter_ClampsAtZeroAndPoisonEliminatesAt10()
-    {
-        var state = StartedGame();
-        var target = state.FindPlayer("p2")!;
-
-        GameRules.AdjustCounter(state, "host", "p2", CounterType.Energy, -3, Now);
-        Assert.Equal(0, target.Energy);
-
-        GameRules.AdjustCounter(state, "host", "p2", CounterType.Poison, 10, Now);
-        Assert.True(target.IsEliminated);
-    }
-
-    [Fact]
-    public void Finish_RecordsWinnerAndBlocksFurtherChanges()
-    {
-        var state = StartedGame();
-
-        GameRules.Finish(state, "p2", "host", Now);
-
-        Assert.Equal(GameStatus.Finished, state.Status);
-        Assert.Equal("host", state.WinnerUserId);
-        Assert.Throws<DomainException>(() => GameRules.AdjustLife(state, "host", "p2", -1, Now));
-    }
-
-    [Fact]
-    public void Log_IsCapped()
-    {
-        var state = StartedGame();
-
-        for (var i = 0; i < GameRules.MaxLogEntries + 20; i++)
-            GameRules.AdjustLife(state, "host", "p2", -1, Now);
-
-        Assert.Equal(GameRules.MaxLogEntries, state.Log.Count);
-    }
-
-    private static PlayerState Player(string id) => new() { UserId = id, DisplayName = id };
-
-    private static GameState TwoPlayerLobby()
-    {
-        var state = GameRules.Create("g", "C", Player("host"), 4, 40, [], Now);
-        GameRules.Join(state, Player("p2"), Now);
-        return state;
-    }
-
-    private static GameState StartedGame()
-    {
-        var state = TwoPlayerLobby();
-        GameRules.Start(state, "host", Now);
-        return state;
+        var c = NewGame();
+        GameRules.Cancel(c, "p1", Now.AddSeconds(5));
+        Assert.Equal(Now.AddSeconds(5), c.LastActivityAt);
     }
 }

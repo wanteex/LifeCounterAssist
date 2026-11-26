@@ -1,0 +1,6 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/LifeCounterAssist.Api.Tests/LifeCounterAssist.Api.Tests.csproj" />
+    <Project Path="src/LifeCounterAssist.Api/LifeCounterAssist.Api.csproj" />
+  </Folder>
+</Solution>

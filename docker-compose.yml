@@ -1,0 +1,33 @@
+# Local stack: Azurite + API (dev auth) + web. Browse http://localhost:8080
+services:
+  azurite:
+    image: mcr.microsoft.com/azure-storage/azurite:latest
+    command: azurite-table --tableHost 0.0.0.0 --skipApiVersionCheck --loose
+    ports:
+      - "10002:10002"
+    volumes:
+      - azurite-data:/data
+
+  api:
+    build: ./backend
+    depends_on:
+      - azurite
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      Auth__Mode: Dev
+      Storage__ConnectionString: "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;TableEndpoint=http://azurite:10002/devstoreaccount1;"
+    ports:
+      - "5075:8080"
+
+  web:
+    build: ./frontend
+    depends_on:
+      - api
+    environment:
+      API_URL: http://localhost:5075
+      AUTH_MODE: dev
+    ports:
+      - "8080:8080"
+
+volumes:
+  azurite-data:

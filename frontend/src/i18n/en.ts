@@ -62,6 +62,7 @@ const en = {
     reconnecting: 'Reconnecting…',
     home: 'Home',
   },
+  screen: { scan: 'Scan to play', lobbyOf: "{{name}}'s game · {{life}} life", finished: 'Game over' },
   errors: {
     invalid_name: 'Invalid name (1 to 20 characters).',
     invalid_seat: 'Invalid seat.',

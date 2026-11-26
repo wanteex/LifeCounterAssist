@@ -63,6 +63,7 @@ const fr: Translation = {
     reconnecting: 'Reconnexion…',
     home: 'Accueil',
   },
+  screen: { scan: 'Scanne pour jouer', lobbyOf: 'Partie de {{name}} · {{life}} PV', finished: 'Partie terminée' },
   errors: {
     invalid_name: 'Pseudo invalide (1 à 20 caractères).',
     invalid_seat: 'Place invalide.',

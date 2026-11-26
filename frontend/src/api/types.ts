@@ -1,5 +1,8 @@
 export type GameStatus = 'Lobby' | 'InProgress' | 'Finished' | 'Cancelled'
 
+/** Only Scryfall art crops are accepted by the server (GameRules.CommanderArtPrefix). */
+export const COMMANDER_ART_PREFIX = 'https://cards.scryfall.io/art_crop/'
+
 /** Commander card chosen by a player (from Scryfall). */
 export interface Commander {
   name: string

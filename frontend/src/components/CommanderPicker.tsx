@@ -62,6 +62,15 @@ export function CommanderPicker({ value, onChange }: { value: Commander | null; 
             placeholder={t('commander.search')}
             aria-label={t('commander.search')}
             autoComplete="off"
+            onKeyDown={(e) => {
+              if (e.key !== 'Enter') return
+              // The picker sits inside the name form: Enter must not submit it without a commander.
+              e.preventDefault()
+              if (status === 'done' && results.length > 0) {
+                onChange(results[0])
+                setText('')
+              }
+            }}
           />
           {status === 'loading' && <p className="text-slate-400">{t('common.loading')}</p>}
           {status === 'error' && <p className="text-amber-300">{t('commander.unavailable')}</p>}

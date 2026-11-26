@@ -1,4 +1,4 @@
-import type { Commander } from './api/types'
+import { COMMANDER_ART_PREFIX, type Commander } from './api/types'
 
 export interface Seat {
   playerId: string
@@ -59,7 +59,7 @@ export function getLastCommander(): Commander | null {
     const raw = localStorage.getItem(commanderKey)
     if (!raw) return null
     const c = JSON.parse(raw) as Partial<Commander>
-    return typeof c.name === 'string' && typeof c.artUrl === 'string' && typeof c.artist === 'string'
+    return typeof c.name === 'string' && typeof c.artUrl === 'string' && typeof c.artist === 'string' && c.artUrl.startsWith(COMMANDER_ART_PREFIX)
       ? { name: c.name, artUrl: c.artUrl, artist: c.artist }
       : null
   } catch {

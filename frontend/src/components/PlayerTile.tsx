@@ -20,7 +20,7 @@ export function PlayerTile({
   const out = player.isEliminated || player.conceded
   const body = (
     <>
-      <CommanderBackdrop commander={player.commander} credit="hidden" />
+      <CommanderBackdrop commander={player.commander} credit="text-[0.55rem] leading-none" />
       <span className="relative min-w-0 flex-1 truncate text-left font-semibold">
         {player.displayName}
         {isHost && <span className="ml-2 text-xs font-normal text-amber-400">{t('game.host')}</span>}

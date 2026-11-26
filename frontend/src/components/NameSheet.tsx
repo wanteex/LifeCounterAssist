@@ -18,9 +18,10 @@ export function NameSheet({ gameId, open, reclaim, onClose, onSeated }: { gameId
     if (open) {
       setError(null)
       setName(getLastName())
-      setCommander(getLastCommander())
+      // Reclaiming keeps the seat's commander unless the player picks a new one.
+      setCommander(reclaim ? null : getLastCommander())
     }
-  }, [open, setError])
+  }, [open, reclaim, setError])
 
   const trimmed = name.trim()
   const valid = trimmed.length >= 1 && trimmed.length <= MAX_NAME_LENGTH

@@ -1,4 +1,4 @@
-import type { Commander } from './types'
+import { COMMANDER_ART_PREFIX, type Commander } from './types'
 
 const SEARCH_URL = 'https://api.scryfall.com/cards/search'
 const MAX_RESULTS = 8
@@ -26,7 +26,8 @@ export async function searchCommanders(text: string, signal: AbortSignal): Promi
   for (const card of body.data ?? []) {
     const face = card.card_faces?.[0]
     const artUrl = card.image_uris?.art_crop ?? face?.image_uris?.art_crop
-    if (!artUrl) continue
+    // Anything the server would reject would block joining: skip it.
+    if (!artUrl?.startsWith(COMMANDER_ART_PREFIX)) continue
     results.push({ name: card.name, artUrl, artist: card.artist ?? face?.artist ?? '' })
     if (results.length === MAX_RESULTS) break
   }

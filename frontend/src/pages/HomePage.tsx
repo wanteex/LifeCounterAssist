@@ -59,7 +59,8 @@ export function HomePage() {
   const openJoin = (game: GameSummary) => {
     setError(null)
     setName(getLastName())
-    setCommander(getLastCommander())
+    // Reclaiming keeps the seat's commander unless the player picks a new one.
+    setCommander(game.status === 'InProgress' ? null : getLastCommander())
     setTarget(game)
   }
 

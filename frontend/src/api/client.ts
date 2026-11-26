@@ -44,7 +44,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 function remember(seat: SeatDto, name: string, commander?: Commander | null) {
   saveSeat(seat.game.id, { playerId: seat.playerId, seatToken: seat.seatToken })
   setLastName(name)
-  if (commander) setLastCommander(commander)
+  if (commander || !seat.reclaimed) setLastCommander(commander ?? null)
 }
 
 export const api = {

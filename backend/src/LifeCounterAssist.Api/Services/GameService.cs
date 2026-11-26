@@ -1,4 +1,231 @@
+using System.Collections.Concurrent;
+using System.Security.Cryptography;
+using System.Text.Json;
+using LifeCounterAssist.Api.Domain;
+using LifeCounterAssist.Api.Infrastructure;
+
 namespace LifeCounterAssist.Api.Services;
 
-/// <summary>Owns the in-memory games. Minimal shell; rewritten in a later task.</summary>
-public sealed class GameService;
+/// <summary>Request to create a game.</summary>
+/// <param name="Name">Host display name.</param>
+/// <param name="StartingLife">Starting life total.</param>
+public sealed record CreateGameRequest(string Name, int StartingLife = 40);
+
+/// <summary>Request to join a game.</summary>
+/// <param name="Name">Display name.</param>
+public sealed record JoinGameRequest(string Name);
+
+/// <summary>A seat handed to a participant; the token is a secret and never part of the game state.</summary>
+/// <param name="Game">Game state.</param>
+/// <param name="PlayerId">Seat owner.</param>
+/// <param name="SeatToken">Secret proving ownership of the seat.</param>
+public sealed record SeatDto(GameState Game, string PlayerId, string SeatToken);
+
+/// <summary>Lightweight game description for the lobby list.</summary>
+/// <param name="Id">Game identifier.</param>
+/// <param name="HostName">Host display name.</param>
+/// <param name="PlayerCount">Seated players.</param>
+/// <param name="StartingLife">Starting life total.</param>
+/// <param name="Status">Game status.</param>
+/// <param name="CreatedAt">Creation date.</param>
+public sealed record GameSummaryDto(
+    string Id, string HostName, int PlayerCount, int StartingLife, GameStatus Status, DateTimeOffset CreatedAt);
+
+/// <summary>Owns the in-memory games, seat tokens and room-screen selection. Single instance only.</summary>
+public sealed class GameService(IGameNotifier notifier, TimeProvider clock)
+{
+    private static readonly TimeSpan FinishedDisplay = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan FinishedRetention = TimeSpan.FromMinutes(10);
+    private static readonly TimeSpan IdleRetention = TimeSpan.FromHours(6);
+
+    private readonly ConcurrentDictionary<string, GameState> _games = new();
+    private readonly ConcurrentDictionary<string, Dictionary<string, string>> _seats = new();
+    private readonly ConcurrentDictionary<string, SemaphoreSlim> _locks = new();
+    private string? _screenGameId;
+
+    /// <summary>Creates a game with the caller seated as host.</summary>
+    /// <param name="r">Creation request.</param>
+    /// <param name="ct">Cancellation token.</param>
+    /// <returns>The host seat.</returns>
+    public async Task<SeatDto> CreateAsync(CreateGameRequest r, CancellationToken ct = default)
+    {
+        var gameId = Guid.NewGuid().ToString("N")[..8];
+        var playerId = NewId();
+        var state = GameRules.Create(gameId, playerId, r.Name, r.StartingLife, clock.GetUtcNow());
+        var token = NewToken();
+        _seats[gameId] = new Dictionary<string, string> { [token] = playerId };
+        _locks[gameId] = new SemaphoreSlim(1, 1);
+        _games[gameId] = state;
+        await BroadcastAsync(state, ct);
+        return new SeatDto(Clone(state), playerId, token);
+    }
+
+    /// <summary>Seats a player, or reclaims the seat of the same name with a fresh token.</summary>
+    /// <param name="gameId">Game identifier.</param>
+    /// <param name="r">Join request.</param>
+    /// <param name="ct">Cancellation token.</param>
+    /// <returns>The seat.</returns>
+    public async Task<SeatDto> JoinAsync(string gameId, JoinGameRequest r, CancellationToken ct = default)
+    {
+        var gate = GateFor(gameId);
+        await gate.WaitAsync(ct);
+        try
+        {
+            var copy = Clone(GetOrThrow(gameId));
+            var (player, reclaimed) = GameRules.Join(copy, NewId(), r.Name, clock.GetUtcNow());
+            var token = NewToken();
+            var seats = _seats[gameId];
+            lock (seats)
+            {
+                foreach (var old in seats.Where(kv => kv.Value == player.PlayerId).Select(kv => kv.Key).ToList())
+                    seats.Remove(old);
+                seats[token] = player.PlayerId;
+            }
+
+            _games[gameId] = copy;
+            // A reclaim does not change the state, so there is nothing to broadcast.
+            if (!reclaimed) await BroadcastAsync(copy, ct);
+            return new SeatDto(Clone(copy), player.PlayerId, token);
+        }
+        finally { gate.Release(); }
+    }
+
+    /// <summary>Gets a game.</summary>
+    /// <param name="gameId">Game identifier.</param>
+    /// <returns>A copy of the game state.</returns>
+    /// <exception cref="NotFoundException">Thrown when the game does not exist.</exception>
+    public GameState Get(string gameId) => Clone(GetOrThrow(gameId));
+
+    /// <summary>Lists lobby and in-progress games, most recent first.</summary>
+    /// <returns>Game summaries.</returns>
+    public IReadOnlyList<GameSummaryDto> List() =>
+        _games.Values
+            .Where(g => g.Status is GameStatus.Lobby or GameStatus.InProgress)
+            .OrderByDescending(g => g.CreatedAt)
+            .Select(g => new GameSummaryDto(
+                g.Id,
+                g.FindPlayer(g.HostPlayerId)?.DisplayName ?? "",
+                g.Players.Count,
+                g.StartingLife,
+                g.Status,
+                g.CreatedAt))
+            .ToList();
+
+    /// <summary>Picks the game to show on the room screen.</summary>
+    /// <returns>A copy of the featured game, or <see langword="null"/>.</returns>
+    public GameState? GetFeatured()
+    {
+        var now = clock.GetUtcNow();
+        var games = _games.Values.ToList();
+
+        var game =
+            games.Where(g => g.Status == GameStatus.InProgress).MaxBy(g => g.StartedAt ?? g.CreatedAt)
+            ?? games.Where(g => g.Status == GameStatus.Finished && g.FinishedAt is { } f && now - f < FinishedDisplay)
+                .MaxBy(g => g.FinishedAt)
+            ?? games.Where(g => g.Status == GameStatus.Lobby).MaxBy(g => g.CreatedAt);
+        return game is null ? null : Clone(game);
+    }
+
+    /// <summary>Applies an action on behalf of a seat owner.</summary>
+    /// <param name="gameId">Game identifier.</param>
+    /// <param name="seatToken">Caller's seat token.</param>
+    /// <param name="action">Action receiving the state and the caller's player identifier.</param>
+    /// <param name="ct">Cancellation token.</param>
+    /// <returns>The new state.</returns>
+    /// <exception cref="NotFoundException">Thrown when the game does not exist.</exception>
+    /// <exception cref="ForbiddenException">Thrown when the token is not a seat of this game.</exception>
+    public async Task<GameState> ActAsync(
+        string gameId, string seatToken, Action<GameState, string> action, CancellationToken ct = default)
+    {
+        var gate = GateFor(gameId);
+        await gate.WaitAsync(ct);
+        try
+        {
+            var current = GetOrThrow(gameId);
+            string? playerId = null;
+            var seats = _seats[gameId];
+            lock (seats)
+            {
+                if (seatToken is not null) seats.TryGetValue(seatToken, out playerId);
+            }
+
+            if (playerId is null) throw new ForbiddenException("invalid_seat");
+
+            var copy = Clone(current);
+            action(copy, playerId);
+            _games[gameId] = copy;
+            await BroadcastAsync(copy, ct);
+            return Clone(copy);
+        }
+        finally { gate.Release(); }
+    }
+
+    /// <summary>Completes elapsed finish countdowns and removes expired games.</summary>
+    /// <param name="ct">Cancellation token.</param>
+    /// <returns>A task.</returns>
+    public async Task TickAsync(CancellationToken ct = default)
+    {
+        var removed = false;
+        var now = clock.GetUtcNow();
+
+        foreach (var id in _games.Keys.ToList())
+        {
+            if (!_locks.TryGetValue(id, out var gate)) continue;
+            await gate.WaitAsync(ct);
+            try
+            {
+                if (!_games.TryGetValue(id, out var current)) continue;
+                var copy = Clone(current);
+                if (GameRules.CompletePendingFinish(copy, now))
+                {
+                    _games[id] = copy;
+                    await BroadcastAsync(copy, ct);
+                }
+                else if (IsExpired(current, now))
+                {
+                    _games.TryRemove(id, out _);
+                    _seats.TryRemove(id, out _);
+                    _locks.TryRemove(id, out _);
+                    removed = true;
+                }
+            }
+            finally { gate.Release(); }
+        }
+
+        // Completed games already broadcast list and screen; only removals and the 30 s display expiry remain.
+        var screen = GetFeatured();
+        if (removed) await notifier.ListChangedAsync(List(), ct);
+        if (removed || screen?.Id != _screenGameId) await PublishScreenAsync(screen, ct);
+    }
+
+    private static bool IsExpired(GameState g, DateTimeOffset now) =>
+        now - g.LastActivityAt > IdleRetention
+        || (g.Status is GameStatus.Finished or GameStatus.Cancelled
+            && now - (g.FinishedAt ?? g.LastActivityAt) > FinishedRetention);
+
+    private async Task BroadcastAsync(GameState state, CancellationToken ct)
+    {
+        await notifier.GameUpdatedAsync(Clone(state), ct);
+        await notifier.ListChangedAsync(List(), ct);
+        await PublishScreenAsync(GetFeatured(), ct);
+    }
+
+    private Task PublishScreenAsync(GameState? featured, CancellationToken ct)
+    {
+        _screenGameId = featured?.Id;
+        return notifier.ScreenChangedAsync(featured, ct);
+    }
+
+    private GameState GetOrThrow(string gameId) =>
+        _games.TryGetValue(gameId, out var state) ? state : throw new NotFoundException("game_not_found");
+
+    private SemaphoreSlim GateFor(string gameId) =>
+        _locks.TryGetValue(gameId, out var gate) ? gate : throw new NotFoundException("game_not_found");
+
+    private static GameState Clone(GameState state) =>
+        JsonSerializer.Deserialize<GameState>(JsonSerializer.Serialize(state, JsonDefaults.Options), JsonDefaults.Options)!;
+
+    private static string NewId() => Guid.NewGuid().ToString("N")[..12];
+
+    private static string NewToken() => Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(16));
+}

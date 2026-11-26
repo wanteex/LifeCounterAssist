@@ -8,7 +8,7 @@ var builder = WebApplication.CreateBuilder(args);
 var config = builder.Configuration;
 
 builder.Services.AddSingleton(TimeProvider.System);
-builder.Services.AddSingleton<Notifier>();
+builder.Services.AddSingleton<IGameNotifier, Notifier>();
 builder.Services.AddSingleton<GameService>();
 
 var allowedOrigins = config.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? [];

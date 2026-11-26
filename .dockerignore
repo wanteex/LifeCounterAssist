@@ -1,0 +1,6 @@
+**/node_modules
+**/bin
+**/obj
+frontend/dist
+backend/src/LifeCounterAssist.Api/wwwroot
+.git

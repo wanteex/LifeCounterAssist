@@ -40,20 +40,20 @@ export function useRecentLifeChanges(game: GameState | null, resetAfterMs = 2500
 
   useEffect(() => {
     if (!game) return
-    const current = Object.fromEntries(game.players.map((p) => [p.userId, p.life]))
+    const current = Object.fromEntries(game.players.map((p) => [p.playerId, p.life]))
     const before = previous.current
     previous.current = current
     if (!before || game.status !== 'InProgress') return
 
-    for (const [userId, life] of Object.entries(current)) {
-      const diff = life - (before[userId] ?? life)
+    for (const [playerId, life] of Object.entries(current)) {
+      const diff = life - (before[playerId] ?? life)
       if (diff === 0) continue
-      setRecent((r) => ({ ...r, [userId]: (r[userId] ?? 0) + diff }))
-      window.clearTimeout(timers.current[userId])
-      timers.current[userId] = window.setTimeout(() => {
+      setRecent((r) => ({ ...r, [playerId]: (r[playerId] ?? 0) + diff }))
+      window.clearTimeout(timers.current[playerId])
+      timers.current[playerId] = window.setTimeout(() => {
         setRecent((r) => {
           const next = { ...r }
-          delete next[userId]
+          delete next[playerId]
           return next
         })
       }, resetAfterMs)

@@ -124,7 +124,7 @@ Supprimer :
 * Packages Azure Storage / Identity / JwtBearer devenus inutiles.
 
 Ajouter :
-* REST : `GET /api/games` (liste), `POST /api/games` (créer : pseudo + PV), `POST /api/games/{id}/join` (pseudo), `POST /api/games/{id}/leave`, `DELETE /api/games/{id}` (annuler, créateur), avec le `seatToken` en en-tête pour les actions.
+* REST : `GET /api/games` (liste), `POST /api/games` (créer : pseudo + PV, refusé au-delà de 20 parties actives), `POST /api/games/{id}/join` (pseudo ; reprise de place si le pseudo existe). Quitter (`LeaveGame`) et annuler (`CancelGame`, créateur) passent par le hub, pas par REST, avec le `seatToken` en argument.
 * Hub : `WatchLobbyList` (liste en direct), `Watch(gameId)` (lecture publique), `WatchScreen` (reçoit la partie affichée et ses changements), actions de jeu avec `seatToken`.
 * Service de nettoyage en tâche de fond.
 * Servir `wwwroot` avec repli sur `index.html` pour les routes du front.

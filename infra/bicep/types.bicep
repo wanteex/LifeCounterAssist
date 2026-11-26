@@ -24,26 +24,6 @@ type DeploymentConfig = {
   location: string
 }
 
-@export()
-@description('Microsoft Entra External ID settings shared by the API and the web client.')
-@sealed()
-type AuthConfig = {
-  @description('Token authority validated by the API, for example https://<tenant>.ciamlogin.com/<tenant-id>/v2.0.')
-  apiAuthority: string
-
-  @description('Comma-separated accepted audiences for API tokens (API application client id and/or App ID URI).')
-  apiAudience: string
-
-  @description('Authority used by the SPA, for example https://<tenant>.ciamlogin.com/.')
-  spaAuthority: string
-
-  @description('Client id of the SPA application registration.')
-  spaClientId: string
-
-  @description('Delegated scope requested by the SPA, for example api://<api-client-id>/access_as_user.')
-  apiScope: string
-}
-
 /* Functions */
 
 @export()

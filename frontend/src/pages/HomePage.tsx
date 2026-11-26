@@ -1,108 +1,145 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Link, useNavigate } from 'react-router-dom'
-import { api } from '../api/client'
-import { onHubEvent } from '../api/hub'
-import type { HistoryEntry, Invitation } from '../api/types'
-import { Button, Card, ErrorBanner, Input, useAction } from '../components/ui'
+import { api, errorCode } from '../api/client'
+import { gameHub, getHub, onReconnected } from '../api/hub'
+import { MAX_NAME_LENGTH, MAX_PLAYERS, type Commander, type GameSummary } from '../api/types'
+import { CommanderPicker } from '../components/CommanderPicker'
+import { Sheet } from '../components/Sheet'
+import { Button, Card, ErrorBanner, Input, Spinner, useAction } from '../components/ui'
+import { getLastCommander, getLastName, getSeat } from '../seats'
+
+/** Live list of games, kept in sync through the hub. */
+function useGameList() {
+  const [games, setGames] = useState<GameSummary[] | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    let active = true
+    const apply = (list: GameSummary[]) => active && setGames(list)
+    const watch = () =>
+      gameHub
+        .watchList()
+        .then((list) => {
+          apply(list)
+          setError(null)
+        })
+        .catch((e) => active && setError(errorCode(e)))
+
+    let cleanupHub = () => {}
+    getHub()
+      .then((hub) => {
+        if (!active) return
+        hub.on('ListChanged', apply)
+        cleanupHub = () => hub.off('ListChanged', apply)
+        return watch()
+      })
+      .catch((e) => active && setError(errorCode(e)))
+    const offReconnect = onReconnected(() => void watch())
+
+    return () => {
+      active = false
+      cleanupHub()
+      offReconnect()
+    }
+  }, [])
+
+  return { games, error }
+}
 
 export function HomePage() {
   const { t } = useTranslation()
   const navigate = useNavigate()
-  const [code, setCode] = useState('')
-  const [invitations, setInvitations] = useState<Invitation[]>([])
-  const [active, setActive] = useState<HistoryEntry[]>([])
+  const { games, error: listError } = useGameList()
+  const [target, setTarget] = useState<GameSummary | null>(null)
+  const [name, setName] = useState('')
+  const [commander, setCommander] = useState<Commander | null>(null)
   const { busy, error, setError, run } = useAction()
 
-  const loadInvitations = useCallback(() => api.invitations().then(setInvitations).catch(() => undefined), [])
+  const openJoin = (game: GameSummary) => {
+    setError(null)
+    setName(getLastName())
+    // Reclaiming keeps the seat's commander unless the player picks a new one.
+    setCommander(game.status === 'InProgress' ? null : getLastCommander())
+    setTarget(game)
+  }
 
-  useEffect(() => {
-    void loadInvitations()
-    api
-      .history()
-      .then((h) => setActive(h.filter((g) => g.status !== 'Finished')))
-      .catch(() => undefined)
-    return onHubEvent('InvitationsChanged', () => void loadInvitations())
-  }, [loadInvitations])
+  const trimmed = name.trim()
+  const validName = trimmed.length >= 1 && trimmed.length <= MAX_NAME_LENGTH
 
-  const join = (gameId: string) =>
-    run(async () => {
-      await api.joinGame(gameId)
-      navigate(`/games/${gameId}`)
+  const submit = (e: FormEvent) => {
+    e.preventDefault()
+    if (!target || !validName) return
+    const id = target.id
+    void run(async () => {
+      const seat = await api.joinGame(id, trimmed, commander)
+      const reclaimedName = seat.reclaimed ? seat.game.players.find((p) => p.playerId === seat.playerId)?.displayName : undefined
+      navigate(`/parties/${id}`, { state: reclaimedName ? { reclaimedName } : undefined })
     })
+  }
 
   return (
     <div className="flex flex-col gap-4">
-      <Link to="/games/new" className="block rounded-2xl bg-amber-500 p-5 text-center text-xl font-black text-slate-950 active:scale-[0.98]">
+      <Link to="/nouvelle" className="block rounded-2xl bg-amber-500 p-5 text-center text-xl font-black text-slate-950 active:scale-[0.98]">
         + {t('home.newGame')}
       </Link>
 
-      <ErrorBanner code={error} onClose={() => setError(null)} />
+      <ErrorBanner code={listError} />
 
-      <Card title={t('home.joinTitle')}>
-        <form
-          className="flex gap-2"
-          onSubmit={(e) => {
-            e.preventDefault()
-            void run(async () => {
-              const game = await api.joinByCode(code.trim().toUpperCase())
-              navigate(`/games/${game.id}`)
-            })
-          }}
-        >
-          <Input
-            value={code}
-            onChange={(e) => setCode(e.target.value.toUpperCase())}
-            placeholder={t('home.joinPlaceholder')}
-            maxLength={5}
-            autoCapitalize="characters"
-            autoComplete="off"
-            className="text-center font-mono text-lg tracking-[0.4em]"
-          />
-          <Button type="submit" disabled={busy || code.trim().length < 5}>
-            {t('home.join')}
+      <Card title={t('home.games')}>
+        {games === null ? (
+          listError ? null : <Spinner />
+        ) : games.length === 0 ? (
+          <p className="text-sm text-slate-400">{t('home.noGames')}</p>
+        ) : (
+          <ul className="flex flex-col gap-2">
+            {games.map((g) => {
+              const hasSeat = getSeat(g.id) !== null
+              return (
+                <li key={g.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-slate-900/60 p-3">
+                  <div className="min-w-0 flex-1 basis-40">
+                    <p className="truncate font-semibold text-slate-100">{t('home.gameOf', { name: g.hostName })}</p>
+                    <p className="text-sm text-slate-400">
+                      {t('home.playersCount', { count: g.playerCount, max: MAX_PLAYERS })} · {t('home.life', { life: g.startingLife })} ·{' '}
+                      {t(`home.status.${g.status}`)}
+                    </p>
+                  </div>
+                  {hasSeat ? (
+                    <Button onClick={() => navigate(`/parties/${g.id}`)}>{t('home.resume')}</Button>
+                  ) : g.status === 'Lobby' || g.status === 'InProgress' ? (
+                    <div className="flex shrink-0 gap-2">
+                      <Button variant="ghost" onClick={() => navigate(`/parties/${g.id}?spectateur`)}>
+                        {t('home.watch')}
+                      </Button>
+                      {g.status === 'Lobby' ? (
+                        <Button onClick={() => openJoin(g)}>{t('home.join')}</Button>
+                      ) : (
+                        <Button variant="secondary" onClick={() => openJoin(g)}>
+                          {t('home.reclaimSeat')}
+                        </Button>
+                      )}
+                    </div>
+                  ) : null}
+                </li>
+              )
+            })}
+          </ul>
+        )}
+      </Card>
+
+      <Sheet open={target !== null} onClose={() => setTarget(null)} title={target ? t('home.gameOf', { name: target.hostName }) : ''}>
+        <form className="flex flex-col gap-3" onSubmit={submit}>
+          <ErrorBanner code={error} onClose={() => setError(null)} />
+          <label className="flex flex-col gap-1 text-sm text-slate-300">
+            {t('home.yourName')}
+            <Input value={name} onChange={(e) => setName(e.target.value)} maxLength={MAX_NAME_LENGTH} autoComplete="nickname" autoFocus />
+          </label>
+          <CommanderPicker value={commander} onChange={setCommander} />
+          <Button type="submit" disabled={busy || !validName}>
+            {target?.status === 'InProgress' ? t('home.reclaimSeat') : t('home.join')}
           </Button>
         </form>
-      </Card>
-
-      <Card title={t('home.invitations')}>
-        {invitations.length === 0 ? (
-          <p className="text-sm text-slate-400">{t('home.noInvitations')}</p>
-        ) : (
-          <ul className="flex flex-col gap-2">
-            {invitations.map((inv) => (
-              <li key={inv.gameId} className="flex items-center justify-between gap-2 rounded-xl bg-slate-900/60 p-3">
-                <span className="text-slate-200">{t('home.invitedBy', { name: inv.hostName })}</span>
-                <span className="flex gap-2">
-                  <Button variant="ghost" disabled={busy} onClick={() => void run(() => api.declineInvitation(inv.gameId).then(loadInvitations))}>
-                    {t('home.decline')}
-                  </Button>
-                  <Button disabled={busy} onClick={() => void join(inv.gameId)}>
-                    {t('home.accept')}
-                  </Button>
-                </span>
-              </li>
-            ))}
-          </ul>
-        )}
-      </Card>
-
-      <Card title={t('home.activeGames')}>
-        {active.length === 0 ? (
-          <p className="text-sm text-slate-400">{t('home.noActiveGames')}</p>
-        ) : (
-          <ul className="flex flex-col gap-2">
-            {active.map((g) => (
-              <li key={g.gameId}>
-                <Link to={`/games/${g.gameId}`} className="flex items-center justify-between rounded-xl bg-slate-900/60 p-3 text-slate-200">
-                  <span className="truncate">{g.playerNames.join(', ')}</span>
-                  <span className="text-amber-400">{t('home.resume')} →</span>
-                </Link>
-              </li>
-            ))}
-          </ul>
-        )}
-      </Card>
+      </Sheet>
     </div>
   )
 }

@@ -1,64 +1,47 @@
-import { useEffect, useState } from 'react'
+import { useState, type FormEvent } from 'react'
 import { useTranslation } from 'react-i18next'
-import { useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { api } from '../api/client'
-import type { Deck, Friend } from '../api/types'
-import { Button, Card, ErrorBanner, useAction } from '../components/ui'
-import { DeckSelect } from '../components/DeckSelect'
-
-const lifeOptions = [20, 25, 30, 40]
+import { LIFE_OPTIONS, MAX_NAME_LENGTH, type Commander } from '../api/types'
+import { CommanderPicker } from '../components/CommanderPicker'
+import { Button, Card, ErrorBanner, Input, useAction } from '../components/ui'
+import { getLastCommander, getLastName } from '../seats'
 
 export function CreateGamePage() {
   const { t } = useTranslation()
   const navigate = useNavigate()
-  const [maxPlayers, setMaxPlayers] = useState(4)
-  const [startingLife, setStartingLife] = useState(40)
-  const [deckId, setDeckId] = useState<string>('')
-  const [decks, setDecks] = useState<Deck[]>([])
-  const [friends, setFriends] = useState<Friend[]>([])
-  const [invited, setInvited] = useState<string[]>([])
+  const [name, setName] = useState(getLastName)
+  const [startingLife, setStartingLife] = useState<number>(40)
+  const [commander, setCommander] = useState<Commander | null>(getLastCommander)
   const { busy, error, setError, run } = useAction()
 
-  useEffect(() => {
-    api.decks().then(setDecks).catch(() => undefined)
-    api
-      .friends()
-      .then((f) => setFriends(f.filter((x) => x.status === 'Accepted')))
-      .catch(() => undefined)
-  }, [])
+  const trimmed = name.trim()
+  const validName = trimmed.length >= 1 && trimmed.length <= MAX_NAME_LENGTH
 
-  const toggle = (userId: string) =>
-    setInvited((current) => (current.includes(userId) ? current.filter((id) => id !== userId) : [...current, userId]))
-
-  const create = () =>
-    run(async () => {
-      const game = await api.createGame({
-        maxPlayers,
-        startingLife,
-        invitedUserIds: invited,
-        deckId: deckId || undefined,
-      })
-      navigate(`/games/${game.id}`, { replace: true })
+  const submit = (e: FormEvent) => {
+    e.preventDefault()
+    if (!validName) return
+    void run(async () => {
+      const seat = await api.createGame(trimmed, startingLife, commander)
+      navigate(`/parties/${seat.game.id}`, { replace: true })
     })
+  }
 
   return (
-    <div className="flex flex-col gap-4">
+    <form className="flex flex-col gap-4" onSubmit={submit}>
       <h1 className="text-2xl font-black">{t('create.title')}</h1>
       <ErrorBanner code={error} onClose={() => setError(null)} />
 
-      <Card title={t('create.players')}>
-        <div className="grid grid-cols-4 gap-2">
-          {[2, 3, 4, 5, 6, 7, 8].map((n) => (
-            <Button key={n} variant={n === maxPlayers ? 'primary' : 'secondary'} onClick={() => setMaxPlayers(n)}>
-              {n}
-            </Button>
-          ))}
+      <Card title={t('create.yourName')}>
+        <Input value={name} onChange={(e) => setName(e.target.value)} maxLength={MAX_NAME_LENGTH} autoComplete="nickname" autoFocus />
+        <div className="mt-4">
+          <CommanderPicker value={commander} onChange={setCommander} />
         </div>
       </Card>
 
       <Card title={t('create.startingLife')}>
         <div className="grid grid-cols-4 gap-2">
-          {lifeOptions.map((n) => (
+          {LIFE_OPTIONS.map((n) => (
             <Button key={n} variant={n === startingLife ? 'primary' : 'secondary'} onClick={() => setStartingLife(n)}>
               {n}
             </Button>
@@ -66,35 +49,12 @@ export function CreateGamePage() {
         </div>
       </Card>
 
-      <Card title={t('create.deck')}>
-        <DeckSelect decks={decks} value={deckId} onChange={setDeckId} />
-      </Card>
-
-      <Card title={t('create.invite')}>
-        {friends.length === 0 ? (
-          <p className="text-sm text-slate-400">{t('create.noFriends')}</p>
-        ) : (
-          <ul className="flex flex-col gap-2">
-            {friends.map((f) => (
-              <li key={f.userId}>
-                <label className="flex items-center gap-3 rounded-xl bg-slate-900/60 p-3">
-                  <input
-                    type="checkbox"
-                    className="h-5 w-5 accent-amber-500"
-                    checked={invited.includes(f.userId)}
-                    onChange={() => toggle(f.userId)}
-                  />
-                  <span>{f.displayName}</span>
-                </label>
-              </li>
-            ))}
-          </ul>
-        )}
-      </Card>
-
-      <Button className="py-4 text-lg" disabled={busy} onClick={() => void create()}>
+      <Button type="submit" className="py-4 text-lg" disabled={busy || !validName}>
         {t('create.create')}
       </Button>
-    </div>
+      <Link to="/" className="text-center text-slate-400">
+        {t('common.back')}
+      </Link>
+    </form>
   )
 }

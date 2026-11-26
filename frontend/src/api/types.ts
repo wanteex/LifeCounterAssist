@@ -1,92 +1,72 @@
-export type GameStatus = 'Lobby' | 'InProgress' | 'Finished'
-export type CounterType = 'Poison' | 'Energy' | 'Experience' | 'CommanderTax'
+export type GameStatus = 'Lobby' | 'InProgress' | 'Finished' | 'Cancelled'
+
+/** Only Scryfall art crops are accepted by the server (GameRules.CommanderArtPrefix). */
+export const COMMANDER_ART_PREFIX = 'https://cards.scryfall.io/art_crop/'
+
+/** Commander card chosen by a player (from Scryfall). */
+export interface Commander {
+  name: string
+  /** Scryfall `art_crop` image URL. */
+  artUrl: string
+  artist: string
+}
 
 export interface PlayerState {
-  userId: string
+  playerId: string
   displayName: string
-  deckId?: string
-  deckName?: string
-  commanderName?: string
-  commanderImageUrl?: string
   life: number
   poison: number
-  energy: number
-  experience: number
-  commanderTax: number
+  /** Commander damage received, keyed by source player id. */
   commanderDamage: Record<string, number>
   conceded: boolean
   isEliminated: boolean
+  commander?: Commander | null
 }
 
 export interface GameLogEntry {
   at: string
-  actorUserId: string
+  actorPlayerId: string
   message: string
-  targetUserId?: string
-  value?: number
-  detail?: string
+  targetPlayerId?: string | null
+  value?: number | null
+  detail?: string | null
 }
 
 export interface GameState {
   id: string
-  joinCode: string
-  hostUserId: string
+  hostPlayerId: string
   status: GameStatus
-  maxPlayers: number
   startingLife: number
   createdAt: string
-  startedAt?: string
-  finishedAt?: string
-  winnerUserId?: string
-  monarchUserId?: string
-  initiativeUserId?: string
+  startedAt?: string | null
+  finishedAt?: string | null
+  lastActivityAt: string
+  winnerPlayerId?: string | null
+  pendingWinnerPlayerId?: string | null
+  pendingFinishAt?: string | null
+  suppressedWinnerPlayerId?: string | null
   players: PlayerState[]
-  invitedUserIds: string[]
   log: GameLogEntry[]
   version: number
 }
 
-export interface Profile {
+export interface GameSummary {
   id: string
-  displayName: string
-  friendCode: string
-  language?: 'fr' | 'en'
-}
-
-export interface Friend {
-  userId: string
-  displayName: string
-  status: 'Pending' | 'Accepted'
-  direction: 'Outgoing' | 'Incoming'
-}
-
-export interface Deck {
-  id: string
-  name: string
-  url?: string
-  source: string
-  commanderName?: string
-  commanderImageUrl?: string
-  colorIdentity?: string
-}
-
-export interface Invitation {
-  gameId: string
-  hostUserId: string
   hostName: string
-  createdAt: string
-}
-
-export interface HistoryEntry {
-  gameId: string
+  playerCount: number
+  startingLife: number
   status: GameStatus
   createdAt: string
-  finishedAt?: string
-  won: boolean
-  winnerName?: string
-  playerCount: number
-  playerNames: string[]
-  deckName?: string
-  commanderName?: string
-  finalLife?: number
 }
+
+export interface SeatDto {
+  game: GameState
+  playerId: string
+  seatToken: string
+  /** True when an existing seat of the same name was taken back. */
+  reclaimed: boolean
+}
+
+export const MAX_PLAYERS = 8
+export const MAX_NAME_LENGTH = 20
+export const LIFE_OPTIONS = [20, 25, 30, 40] as const

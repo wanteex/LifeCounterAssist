@@ -1,12 +1,9 @@
 namespace LifeCounterAssist.Api.Domain;
 
 /// <summary>Pure rule functions mutating a <see cref="GameState"/>.</summary>
-/// <remarks>Callers are responsible for synchronization and persistence.</remarks>
+/// <remarks>Callers are responsible for synchronization.</remarks>
 public static class GameRules
 {
-    /// <summary>Default Commander starting life.</summary>
-    public const int CommanderStartingLife = 40;
-
     /// <summary>Commander damage from a single source that eliminates a player.</summary>
     public const int LethalCommanderDamage = 21;
 
@@ -17,284 +14,322 @@ public static class GameRules
     public const int MinPlayers = 2;
 
     /// <summary>Maximum number of seats.</summary>
-    public const int MaxPlayersLimit = 8;
+    public const int MaxPlayers = 8;
+
+    /// <summary>Maximum display name length.</summary>
+    public const int MaxNameLength = 20;
 
     /// <summary>Number of log entries kept in the shared state.</summary>
     public const int MaxLogEntries = 100;
 
+    /// <summary>Delay between the last opponent falling and the game ending.</summary>
+    public static readonly TimeSpan FinishCountdown = TimeSpan.FromSeconds(10);
+
+    /// <summary>Only Scryfall art crops may be shown on the room screen.</summary>
+    public const string CommanderArtPrefix = "https://cards.scryfall.io/art_crop/";
+
+    private const int MaxCommanderNameLength = 150;
+    private const int MaxCommanderArtistLength = 100;
+    private const int MaxCommanderArtUrlLength = 300;
+
+    private static readonly int[] AllowedStartingLife = [20, 25, 30, 40];
+
+    /// <summary>Trims and validates a commander choice.</summary>
+    /// <param name="commander">Raw commander, or <see langword="null"/> for none.</param>
+    /// <returns>The trimmed commander, or <see langword="null"/>.</returns>
+    /// <exception cref="DomainException">Thrown when the name, artist or art URL is invalid.</exception>
+    public static CommanderInfo? NormalizeCommander(CommanderInfo? commander)
+    {
+        if (commander is null) return null;
+        var name = commander.Name?.Trim() ?? "";
+        var artist = commander.Artist?.Trim() ?? "";
+        var url = commander.ArtUrl ?? "";
+        if (name.Length is 0 or > MaxCommanderNameLength
+            || artist.Length > MaxCommanderArtistLength
+            || url.Length > MaxCommanderArtUrlLength
+            || !url.StartsWith(CommanderArtPrefix, StringComparison.Ordinal))
+            throw new DomainException("invalid_commander");
+        return new CommanderInfo(name, url, artist);
+    }
+
+    /// <summary>Trims and validates a display name.</summary>
+    /// <param name="name">Raw name.</param>
+    /// <returns>The trimmed name.</returns>
+    /// <exception cref="DomainException">Thrown when the name is empty or too long.</exception>
+    public static string NormalizeName(string? name)
+    {
+        var trimmed = name?.Trim() ?? "";
+        if (trimmed.Length is 0 or > MaxNameLength) throw new DomainException("invalid_name");
+        return trimmed;
+    }
+
     /// <summary>Creates a new game in lobby with the host seated.</summary>
     /// <param name="id">Game identifier.</param>
-    /// <param name="joinCode">Join code.</param>
-    /// <param name="host">The host player.</param>
-    /// <param name="maxPlayers">Number of seats.</param>
+    /// <param name="hostPlayerId">Host player identifier.</param>
+    /// <param name="hostName">Host display name.</param>
     /// <param name="startingLife">Starting life total.</param>
-    /// <param name="invitedUserIds">Users invited to the game.</param>
     /// <param name="now">Current time.</param>
+    /// <param name="commander">Host commander, if any.</param>
     /// <returns>The new game.</returns>
-    /// <exception cref="DomainException">Thrown when settings are out of range.</exception>
-    public static GameState Create(
-        string id,
-        string joinCode,
-        PlayerState host,
-        int maxPlayers,
-        int startingLife,
-        IEnumerable<string> invitedUserIds,
-        DateTimeOffset now)
+    /// <exception cref="DomainException">Thrown when settings are invalid.</exception>
+    public static GameState Create(string id, string hostPlayerId, string hostName, int startingLife, DateTimeOffset now, CommanderInfo? commander = null)
     {
-        if (maxPlayers is < MinPlayers or > MaxPlayersLimit)
-            throw new DomainException("invalid_player_count");
-        if (startingLife is < 1 or > 999)
-            throw new DomainException("invalid_starting_life");
+        if (!AllowedStartingLife.Contains(startingLife)) throw new DomainException("invalid_starting_life");
+        var name = NormalizeName(hostName);
+        var hostCommander = NormalizeCommander(commander);
 
-        host.Life = startingLife;
         var state = new GameState
         {
             Id = id,
-            JoinCode = joinCode,
-            HostUserId = host.UserId,
-            MaxPlayers = maxPlayers,
+            HostPlayerId = hostPlayerId,
             StartingLife = startingLife,
             CreatedAt = now,
-            Players = [host],
-            InvitedUserIds = invitedUserIds.Where(u => u != host.UserId).Distinct().ToList(),
+            LastActivityAt = now,
+            Players = [new PlayerState { PlayerId = hostPlayerId, DisplayName = name, Life = startingLife, Commander = hostCommander }],
         };
-        AddLog(state, new GameLogEntry(now, host.UserId, "created"));
+        AddLog(state, new GameLogEntry(now, hostPlayerId, "created"), now);
         return state;
     }
 
-    /// <summary>Seats a player in a lobby. Joining twice is a no-op.</summary>
+    /// <summary>Seats a player, or hands back the existing seat when the name is already taken.</summary>
     /// <param name="state">Game state.</param>
-    /// <param name="player">Player to seat.</param>
+    /// <param name="newPlayerId">Identifier for a newly created seat.</param>
+    /// <param name="name">Display name.</param>
     /// <param name="now">Current time.</param>
-    /// <exception cref="DomainException">Thrown when the game is not in lobby or full.</exception>
-    public static void Join(GameState state, PlayerState player, DateTimeOffset now)
+    /// <param name="commander">Commander to set; on a reclaim, <see langword="null"/> keeps the current one.</param>
+    /// <returns>The seat and whether it was reclaimed.</returns>
+    /// <exception cref="DomainException">Thrown when the game is over, started, or full, or the commander is invalid.</exception>
+    public static (PlayerState Player, bool Reclaimed) Join(GameState state, string newPlayerId, string name, DateTimeOffset now, CommanderInfo? commander = null)
     {
-        if (state.FindPlayer(player.UserId) is not null) return;
-        if (state.Status != GameStatus.Lobby) throw new DomainException("game_already_started");
-        if (state.Players.Count >= state.MaxPlayers) throw new DomainException("game_full");
+        var normalized = NormalizeName(name);
+        var chosen = NormalizeCommander(commander);
+        if (state.Status is GameStatus.Finished or GameStatus.Cancelled) throw new DomainException("game_over");
 
-        player.Life = state.StartingLife;
+        var existing = state.FindPlayerByName(normalized);
+        if (existing is not null)
+        {
+            if (chosen is not null) existing.Commander = chosen;
+            return (existing, true);
+        }
+
+        if (state.Status != GameStatus.Lobby) throw new DomainException("game_already_started");
+        if (state.Players.Count >= MaxPlayers) throw new DomainException("game_full");
+
+        var player = new PlayerState { PlayerId = newPlayerId, DisplayName = normalized, Life = state.StartingLife, Commander = chosen };
         state.Players.Add(player);
-        state.InvitedUserIds.Remove(player.UserId);
-        AddLog(state, new GameLogEntry(now, player.UserId, "joined"));
+        AddLog(state, new GameLogEntry(now, newPlayerId, "joined"), now);
+        return (player, false);
     }
 
     /// <summary>Removes a player from a lobby. The host cannot leave.</summary>
     /// <param name="state">Game state.</param>
-    /// <param name="userId">Player leaving.</param>
+    /// <param name="playerId">Player leaving.</param>
     /// <param name="now">Current time.</param>
     /// <exception cref="DomainException">Thrown when the game already started or the host leaves.</exception>
-    public static void Leave(GameState state, string userId, DateTimeOffset now)
+    public static void Leave(GameState state, string playerId, DateTimeOffset now)
     {
         if (state.Status != GameStatus.Lobby) throw new DomainException("game_already_started");
-        if (userId == state.HostUserId) throw new DomainException("host_cannot_leave");
-        if (state.Players.RemoveAll(p => p.UserId == userId) > 0)
-            AddLog(state, new GameLogEntry(now, userId, "left"));
+        if (playerId == state.HostPlayerId) throw new DomainException("host_cannot_leave");
+        if (state.Players.RemoveAll(p => p.PlayerId == playerId) > 0)
+            AddLog(state, new GameLogEntry(now, playerId, "left"), now);
     }
 
-    /// <summary>Sets the deck a player uses.</summary>
+    /// <summary>Cancels a lobby game (host only).</summary>
     /// <param name="state">Game state.</param>
-    /// <param name="userId">Player choosing the deck.</param>
-    /// <param name="deck">Deck info, or <see langword="null"/> to clear.</param>
-    /// <exception cref="DomainException">Thrown when the game is finished.</exception>
-    public static void SelectDeck(GameState state, string userId, DeckInfo? deck)
+    /// <param name="actorPlayerId">Must be the host.</param>
+    /// <param name="now">Current time.</param>
+    /// <exception cref="ForbiddenException">Thrown when the actor is not the host.</exception>
+    /// <exception cref="DomainException">Thrown when the game is not in lobby.</exception>
+    public static void Cancel(GameState state, string actorPlayerId, DateTimeOffset now)
     {
-        EnsureNotFinished(state);
-        var player = GetPlayer(state, userId);
-        player.DeckId = deck?.Id;
-        player.DeckName = deck?.Name;
-        player.CommanderName = deck?.CommanderName;
-        player.CommanderImageUrl = deck?.CommanderImageUrl;
-        state.Version++;
+        if (actorPlayerId != state.HostPlayerId) throw new ForbiddenException("host_only");
+        if (state.Status != GameStatus.Lobby) throw new DomainException("game_already_started");
+
+        state.Status = GameStatus.Cancelled;
+        state.FinishedAt = now;
+        AddLog(state, new GameLogEntry(now, actorPlayerId, "cancelled"), now);
     }
 
     /// <summary>Moves a lobby game to in-progress.</summary>
     /// <param name="state">Game state.</param>
-    /// <param name="actorUserId">Must be the host.</param>
+    /// <param name="actorPlayerId">Must be the host.</param>
     /// <param name="now">Current time.</param>
     /// <exception cref="ForbiddenException">Thrown when the actor is not the host.</exception>
     /// <exception cref="DomainException">Thrown when not enough players are seated.</exception>
-    public static void Start(GameState state, string actorUserId, DateTimeOffset now)
+    public static void Start(GameState state, string actorPlayerId, DateTimeOffset now)
     {
-        if (actorUserId != state.HostUserId) throw new ForbiddenException("host_only");
+        if (actorPlayerId != state.HostPlayerId) throw new ForbiddenException("host_only");
         if (state.Status != GameStatus.Lobby) throw new DomainException("game_already_started");
         if (state.Players.Count < MinPlayers) throw new DomainException("not_enough_players");
 
         state.Status = GameStatus.InProgress;
         state.StartedAt = now;
-        state.InvitedUserIds.Clear();
-        AddLog(state, new GameLogEntry(now, actorUserId, "started"));
+        AddLog(state, new GameLogEntry(now, actorPlayerId, "started"), now);
     }
 
     /// <summary>Adds a delta to a player's life.</summary>
     /// <param name="state">Game state.</param>
-    /// <param name="actorUserId">Player performing the change.</param>
-    /// <param name="targetUserId">Player whose life changes.</param>
+    /// <param name="actor">Player performing the change.</param>
+    /// <param name="target">Player whose life changes.</param>
     /// <param name="delta">Signed delta.</param>
     /// <param name="now">Current time.</param>
-    public static void AdjustLife(GameState state, string actorUserId, string targetUserId, int delta, DateTimeOffset now)
+    public static void AdjustLife(GameState state, string actor, string target, int delta, DateTimeOffset now)
     {
         EnsureInProgress(state);
+        var player = GetPlayer(state, target);
         if (delta == 0) return;
-        var target = GetPlayer(state, targetUserId);
-        target.Life += delta;
-        AddLog(state, new GameLogEntry(now, actorUserId, "life", targetUserId, delta));
+        player.Life += delta;
+        AddLog(state, new GameLogEntry(now, actor, "life", target, delta), now);
+        RefreshPendingFinish(state, now);
     }
 
     /// <summary>
-    /// Adds commander damage dealt by <paramref name="sourceUserId"/>'s commander.
+    /// Adds commander damage dealt by the commander of <paramref name="source"/>.
     /// Commander damage is also life loss, so life is adjusted by the opposite delta.
     /// </summary>
     /// <param name="state">Game state.</param>
-    /// <param name="actorUserId">Player performing the change.</param>
-    /// <param name="targetUserId">Player receiving damage.</param>
-    /// <param name="sourceUserId">Owner of the commander dealing damage.</param>
+    /// <param name="actor">Player performing the change.</param>
+    /// <param name="target">Player receiving damage.</param>
+    /// <param name="source">Owner of the commander dealing damage.</param>
     /// <param name="delta">Signed delta of damage.</param>
     /// <param name="now">Current time.</param>
     /// <exception cref="DomainException">Thrown when target and source are the same player.</exception>
     public static void AdjustCommanderDamage(
-        GameState state, string actorUserId, string targetUserId, string sourceUserId, int delta, DateTimeOffset now)
+        GameState state, string actor, string target, string source, int delta, DateTimeOffset now)
     {
         EnsureInProgress(state);
         if (delta == 0) return;
-        if (targetUserId == sourceUserId) throw new DomainException("invalid_commander_source");
-        var target = GetPlayer(state, targetUserId);
-        GetPlayer(state, sourceUserId);
+        if (target == source) throw new DomainException("invalid_commander_source");
+        var player = GetPlayer(state, target);
+        GetPlayer(state, source);
 
-        var current = target.CommanderDamage.GetValueOrDefault(sourceUserId);
+        var current = player.CommanderDamage.GetValueOrDefault(source);
         var next = Math.Max(0, current + delta);
         var applied = next - current;
         if (applied == 0) return;
 
-        target.CommanderDamage[sourceUserId] = next;
-        target.Life -= applied;
-        AddLog(state, new GameLogEntry(now, actorUserId, "commander_damage", targetUserId, applied, sourceUserId));
+        player.CommanderDamage[source] = next;
+        player.Life -= applied;
+        AddLog(state, new GameLogEntry(now, actor, "commander_damage", target, applied, source), now);
+        RefreshPendingFinish(state, now);
     }
 
-    /// <summary>Adds a delta to a non-negative player counter.</summary>
+    /// <summary>Adds a delta to a player's poison counters (never below zero).</summary>
     /// <param name="state">Game state.</param>
-    /// <param name="actorUserId">Player performing the change.</param>
-    /// <param name="targetUserId">Player whose counter changes.</param>
-    /// <param name="counter">Counter type.</param>
+    /// <param name="actor">Player performing the change.</param>
+    /// <param name="target">Player whose counter changes.</param>
     /// <param name="delta">Signed delta.</param>
     /// <param name="now">Current time.</param>
-    public static void AdjustCounter(
-        GameState state, string actorUserId, string targetUserId, CounterType counter, int delta, DateTimeOffset now)
+    public static void AdjustPoison(GameState state, string actor, string target, int delta, DateTimeOffset now)
     {
         EnsureInProgress(state);
-        var target = GetPlayer(state, targetUserId);
-        int Apply(int value) => Math.Max(0, value + delta);
+        var player = GetPlayer(state, target);
+        var after = Math.Max(0, player.Poison + delta);
+        var applied = after - player.Poison;
+        if (applied == 0) return;
 
-        var before = counter switch
-        {
-            CounterType.Poison => target.Poison,
-            CounterType.Energy => target.Energy,
-            CounterType.Experience => target.Experience,
-            CounterType.CommanderTax => target.CommanderTax,
-            _ => throw new DomainException("invalid_counter"),
-        };
-        var after = Apply(before);
-        if (after == before) return;
-
-        switch (counter)
-        {
-            case CounterType.Poison: target.Poison = after; break;
-            case CounterType.Energy: target.Energy = after; break;
-            case CounterType.Experience: target.Experience = after; break;
-            case CounterType.CommanderTax: target.CommanderTax = after; break;
-        }
-
-        AddLog(state, new GameLogEntry(now, actorUserId, "counter", targetUserId, after - before, counter.ToString()));
-    }
-
-    /// <summary>Gives or clears the monarch designation.</summary>
-    /// <param name="state">Game state.</param>
-    /// <param name="actorUserId">Player performing the change.</param>
-    /// <param name="targetUserId">New monarch, or <see langword="null"/> to clear.</param>
-    /// <param name="now">Current time.</param>
-    public static void SetMonarch(GameState state, string actorUserId, string? targetUserId, DateTimeOffset now)
-    {
-        EnsureInProgress(state);
-        if (targetUserId is not null) GetPlayer(state, targetUserId);
-        state.MonarchUserId = targetUserId;
-        AddLog(state, new GameLogEntry(now, actorUserId, "monarch", targetUserId));
-    }
-
-    /// <summary>Gives or clears the initiative.</summary>
-    /// <param name="state">Game state.</param>
-    /// <param name="actorUserId">Player performing the change.</param>
-    /// <param name="targetUserId">Player taking the initiative, or <see langword="null"/> to clear.</param>
-    /// <param name="now">Current time.</param>
-    public static void SetInitiative(GameState state, string actorUserId, string? targetUserId, DateTimeOffset now)
-    {
-        EnsureInProgress(state);
-        if (targetUserId is not null) GetPlayer(state, targetUserId);
-        state.InitiativeUserId = targetUserId;
-        AddLog(state, new GameLogEntry(now, actorUserId, "initiative", targetUserId));
+        player.Poison = after;
+        AddLog(state, new GameLogEntry(now, actor, "poison", target, applied), now);
+        RefreshPendingFinish(state, now);
     }
 
     /// <summary>Toggles whether a player conceded.</summary>
     /// <param name="state">Game state.</param>
-    /// <param name="actorUserId">Player performing the change.</param>
-    /// <param name="targetUserId">Player conceding or un-conceding.</param>
+    /// <param name="actor">Player performing the change.</param>
+    /// <param name="target">Player conceding or un-conceding.</param>
     /// <param name="now">Current time.</param>
-    public static void ToggleConcede(GameState state, string actorUserId, string targetUserId, DateTimeOffset now)
+    public static void ToggleConcede(GameState state, string actor, string target, DateTimeOffset now)
     {
         EnsureInProgress(state);
-        var target = GetPlayer(state, targetUserId);
-        target.Conceded = !target.Conceded;
-        AddLog(state, new GameLogEntry(now, actorUserId, target.Conceded ? "conceded" : "unconceded", targetUserId));
+        var player = GetPlayer(state, target);
+        player.Conceded = !player.Conceded;
+        AddLog(state, new GameLogEntry(now, actor, player.Conceded ? "conceded" : "unconceded", target), now);
+        RefreshPendingFinish(state, now);
     }
 
-    /// <summary>Ends the game with an optional winner (draw when <see langword="null"/>).</summary>
+    /// <summary>Cancels the running finish countdown; it will not restart for the same survivor.</summary>
     /// <param name="state">Game state.</param>
-    /// <param name="actorUserId">Player ending the game.</param>
-    /// <param name="winnerUserId">Winner, or <see langword="null"/> for a draw.</param>
+    /// <param name="actor">Player cancelling.</param>
     /// <param name="now">Current time.</param>
-    public static void Finish(GameState state, string actorUserId, string? winnerUserId, DateTimeOffset now)
+    public static void CancelPendingFinish(GameState state, string actor, DateTimeOffset now)
     {
         EnsureInProgress(state);
-        if (winnerUserId is not null) GetPlayer(state, winnerUserId);
+        if (state.PendingWinnerPlayerId is null) return;
+
+        state.SuppressedWinnerPlayerId = state.PendingWinnerPlayerId;
+        ClearPending(state);
+        AddLog(state, new GameLogEntry(now, actor, "finish_cancelled"), now);
+    }
+
+    /// <summary>Ends the game manually, without a winner.</summary>
+    /// <param name="state">Game state.</param>
+    /// <param name="actor">Player ending the game.</param>
+    /// <param name="now">Current time.</param>
+    public static void Finish(GameState state, string actor, DateTimeOffset now)
+    {
+        EnsureInProgress(state);
         state.Status = GameStatus.Finished;
         state.FinishedAt = now;
-        state.WinnerUserId = winnerUserId;
-        AddLog(state, new GameLogEntry(now, actorUserId, "finished", winnerUserId));
+        state.WinnerPlayerId = null;
+        ClearPending(state);
+        AddLog(state, new GameLogEntry(now, actor, "finished"), now);
     }
 
-    /// <summary>Returns the only remaining player when everyone else is eliminated.</summary>
+    /// <summary>Ends the game with the pending winner once the countdown has elapsed.</summary>
     /// <param name="state">Game state.</param>
-    /// <returns>The last player standing, or <see langword="null"/>.</returns>
-    public static string? SuggestWinner(GameState state)
+    /// <param name="now">Current time.</param>
+    /// <returns><see langword="true"/> when the game has just finished.</returns>
+    public static bool CompletePendingFinish(GameState state, DateTimeOffset now)
+    {
+        if (state.Status != GameStatus.InProgress || state.PendingFinishAt is null || state.PendingFinishAt > now)
+            return false;
+
+        var winner = state.PendingWinnerPlayerId;
+        state.Status = GameStatus.Finished;
+        state.WinnerPlayerId = winner;
+        state.FinishedAt = now;
+        ClearPending(state);
+        AddLog(state, new GameLogEntry(now, winner ?? "", "finished"), now);
+        return true;
+    }
+
+    private static void RefreshPendingFinish(GameState state, DateTimeOffset now)
     {
         var alive = state.Players.Where(p => !p.IsEliminated).ToList();
-        return alive.Count == 1 ? alive[0].UserId : null;
+        if (alive.Count == 1)
+        {
+            var winner = alive[0].PlayerId;
+            if (winner == state.SuppressedWinnerPlayerId || winner == state.PendingWinnerPlayerId) return;
+            state.PendingWinnerPlayerId = winner;
+            state.PendingFinishAt = now + FinishCountdown;
+        }
+        else
+        {
+            ClearPending(state);
+            state.SuppressedWinnerPlayerId = null;
+        }
     }
 
-    private static PlayerState GetPlayer(GameState state, string userId) =>
-        state.FindPlayer(userId) ?? throw new NotFoundException("player_not_found");
+    private static void ClearPending(GameState state)
+    {
+        state.PendingWinnerPlayerId = null;
+        state.PendingFinishAt = null;
+    }
+
+    private static PlayerState GetPlayer(GameState state, string playerId) =>
+        state.FindPlayer(playerId) ?? throw new NotFoundException("player_not_found");
 
     private static void EnsureInProgress(GameState state)
     {
         if (state.Status != GameStatus.InProgress) throw new DomainException("game_not_in_progress");
     }
 
-    private static void EnsureNotFinished(GameState state)
-    {
-        if (state.Status == GameStatus.Finished) throw new DomainException("game_finished");
-    }
-
-    private static void AddLog(GameState state, GameLogEntry entry)
+    private static void AddLog(GameState state, GameLogEntry entry, DateTimeOffset now)
     {
         state.Log.Add(entry);
         if (state.Log.Count > MaxLogEntries)
             state.Log.RemoveRange(0, state.Log.Count - MaxLogEntries);
+        state.LastActivityAt = now;
         state.Version++;
     }
 }
-
-/// <summary>Deck information copied into a player's seat.</summary>
-/// <param name="Id">Deck identifier.</param>
-/// <param name="Name">Deck name.</param>
-/// <param name="CommanderName">Commander name.</param>
-/// <param name="CommanderImageUrl">Commander art URL.</param>
-public sealed record DeckInfo(string Id, string Name, string? CommanderName, string? CommanderImageUrl);

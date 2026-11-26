@@ -1,6 +1,6 @@
-import { authClient } from '../auth/authClient'
 import { config } from '../config'
-import type { Deck, Friend, GameState, HistoryEntry, Invitation, Profile } from './types'
+import { saveSeat, setLastCommander, setLastName } from '../seats'
+import type { Commander, GameState, GameSummary, SeatDto } from './types'
 
 /** Error carrying the backend business code (ProblemDetails `code` or HubException message). */
 export class ApiError extends Error {
@@ -15,15 +15,16 @@ export class ApiError extends Error {
 }
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
-  const token = await authClient.getToken()
-  const response = await fetch(`${config.apiUrl}${path}`, {
-    method,
-    headers: {
-      Authorization: `Bearer ${token}`,
-      ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
-    },
-    body: body !== undefined ? JSON.stringify(body) : undefined,
-  })
+  let response: Response
+  try {
+    response = await fetch(`${config.apiUrl}${path}`, {
+      method,
+      headers: body !== undefined ? { 'Content-Type': 'application/json' } : undefined,
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    })
+  } catch {
+    throw new ApiError('unexpected_error')
+  }
 
   if (!response.ok) {
     let code = 'unexpected_error'
@@ -40,33 +41,27 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   return (await response.json()) as T
 }
 
-export const api = {
-  me: () => request<Profile>('GET', '/api/me'),
-  updateMe: (body: Partial<Pick<Profile, 'displayName' | 'language'>>) => request<Profile>('PUT', '/api/me', body),
-
-  friends: () => request<Friend[]>('GET', '/api/friends'),
-  addFriend: (friendCode: string) => request<Friend>('POST', '/api/friends', { friendCode }),
-  acceptFriend: (userId: string) => request<Friend>('POST', `/api/friends/${encodeURIComponent(userId)}/accept`),
-  removeFriend: (userId: string) => request<void>('DELETE', `/api/friends/${encodeURIComponent(userId)}`),
-
-  decks: () => request<Deck[]>('GET', '/api/decks'),
-  addDeck: (body: { url?: string; name?: string; commanderName?: string }) => request<Deck>('POST', '/api/decks', body),
-  deleteDeck: (id: string) => request<void>('DELETE', `/api/decks/${encodeURIComponent(id)}`),
-
-  createGame: (body: { maxPlayers: number; startingLife?: number; invitedUserIds?: string[]; deckId?: string }) =>
-    request<GameState>('POST', '/api/games', body),
-  history: () => request<HistoryEntry[]>('GET', '/api/games/history'),
-  joinByCode: (code: string, deckId?: string) => request<GameState>('POST', '/api/games/join', { code, deckId }),
-  game: (id: string) => request<GameState>('GET', `/api/games/${encodeURIComponent(id)}`),
-  joinGame: (id: string, deckId?: string) => request<GameState>('POST', `/api/games/${encodeURIComponent(id)}/join`, { deckId }),
-  leaveGame: (id: string) => request<void>('POST', `/api/games/${encodeURIComponent(id)}/leave`),
-  invite: (id: string, userIds: string[]) => request<GameState>('POST', `/api/games/${encodeURIComponent(id)}/invite`, { userIds }),
-
-  invitations: () => request<Invitation[]>('GET', '/api/invitations'),
-  declineInvitation: (gameId: string) => request<void>('DELETE', `/api/invitations/${encodeURIComponent(gameId)}`),
+function remember(seat: SeatDto, name: string, commander?: Commander | null) {
+  saveSeat(seat.game.id, { playerId: seat.playerId, seatToken: seat.seatToken })
+  setLastName(name)
+  if (commander || !seat.reclaimed) setLastCommander(commander ?? null)
 }
 
-/** Extracts a translatable error code from any thrown value. */
+export const api = {
+  games: () => request<GameSummary[]>('GET', '/api/games'),
+  game: (id: string) => request<GameState>('GET', `/api/games/${encodeURIComponent(id)}`),
+  createGame: async (name: string, startingLife: number, commander?: Commander | null) => {
+    const seat = await request<SeatDto>('POST', '/api/games', { name, startingLife, commander: commander ?? null })
+    remember(seat, name, commander)
+    return seat
+  },
+  joinGame: async (id: string, name: string, commander?: Commander | null) => {
+    const seat = await request<SeatDto>('POST', `/api/games/${encodeURIComponent(id)}/join`, { name, commander: commander ?? null })
+    remember(seat, name, commander)
+    return seat
+  },
+}
+
 export function errorCode(error: unknown): string {
   if (error instanceof ApiError) return error.code
   if (error instanceof Error) {

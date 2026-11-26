@@ -1,7 +1,7 @@
 metadata name = 'Life Counter Assist'
-metadata description = 'Deploys Life Counter Assist on Azure: Log Analytics, Container Registry, Table Storage, a managed identity and, once images are pushed, the API and web Container Apps.'
+metadata description = 'Deploys Life Counter Assist on Azure: Log Analytics, Container Registry, a managed identity and, once the image is pushed, the single Container App (API and front).'
 
-import { AuthConfig, DeploymentConfig, resourceName, uniqueResourceName } from 'types.bicep'
+import { DeploymentConfig, resourceName, uniqueResourceName } from 'types.bicep'
 
 /* Common parameters */
 
@@ -21,32 +21,17 @@ param tags object = {
 @maxValue(730)
 param logRetentionInDays int = 30
 
-/* Storage parameters */
-
-@description('Storage redundancy SKU.')
-param storageSkuName 'Standard_LRS' | 'Standard_ZRS' | 'Standard_GRS' = 'Standard_LRS'
-
 /* Compute parameters */
 
 @description('Container registry SKU.')
 param registrySku 'Basic' | 'Standard' | 'Premium' = 'Basic'
 
-@description('Image tag to deploy. (Leave null on the first deployment, push the images, then redeploy with a tag to create the apps.)')
+@description('Image tag to deploy. (Leave null on the first deployment, push the image, then redeploy with a tag to create the app.)')
 param imageTag string?
-
-@description('Maximum number of web replicas.')
-@minValue(1)
-@maxValue(10)
-param webMaxReplicas int = 2
-
-/* Settings parameters */
-
-@description('Microsoft Entra External ID settings.')
-param auth AuthConfig
 
 /* Variables */
 
-var isAppsDeployed bool = !empty(imageTag)
+var isAppDeployed bool = !empty(imageTag)
 
 /* Modules */
 
@@ -68,40 +53,25 @@ module registry 'modules/registry.bicep' = {
   }
 }
 
-module storage 'modules/storage.bicep' = {
-  params: {
-    location: common.location
-    storageAccountName: uniqueResourceName('st', common, resourceGroup().id)
-    skuName: storageSkuName
-    tags: tags
-  }
-}
-
 module identity 'modules/identity.bicep' = {
   params: {
     location: common.location
     identityName: resourceName('id', common, '')
     registryName: registry.outputs.registryName
-    storageAccountName: storage.outputs.storageAccountName
     tags: tags
   }
 }
 
-module apps 'modules/container-apps.bicep' = if (isAppsDeployed) {
+module app 'modules/container-apps.bicep' = if (isAppDeployed) {
   params: {
     location: common.location
     tags: tags
     identityName: identity.outputs.identityName
     workspaceName: monitoring.outputs.workspaceName
     environmentName: resourceName('cae', common, '')
-    apiAppName: resourceName('ca', common, 'api')
-    webAppName: resourceName('ca', common, 'web')
+    appName: resourceName('ca', common, 'app')
     registryLoginServer: registry.outputs.loginServer
-    apiImage: '${registry.outputs.loginServer}/lca-api:${imageTag}'
-    webImage: '${registry.outputs.loginServer}/lca-web:${imageTag}'
-    webMaxReplicas: webMaxReplicas
-    auth: auth
-    tableEndpoint: storage.outputs.tableEndpoint
+    image: '${registry.outputs.loginServer}/lca-app:${imageTag}'
   }
 }
 
@@ -113,8 +83,5 @@ output registryName string = registry.outputs.registryName
 @description('Container registry login server.')
 output registryLoginServer string = registry.outputs.loginServer
 
-@description('Public URL of the web app, when deployed.')
-output webUrl string? = isAppsDeployed ? apps!.outputs.webUrl : null
-
-@description('Public URL of the API, when deployed.')
-output apiUrl string? = isAppsDeployed ? apps!.outputs.apiUrl : null
+@description('Public URL of the app, when deployed.')
+output appUrl string? = isAppDeployed ? app!.outputs.appUrl : null

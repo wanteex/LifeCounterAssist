@@ -1,102 +1,69 @@
 import { useTranslation } from 'react-i18next'
-import type { CounterType, GameState, PlayerState } from '../api/types'
+import type { GameState, PlayerState } from '../api/types'
 import { HoldButton } from './HoldButton'
-import { Button } from './ui'
+import { Sheet } from './Sheet'
 
-const counters: { type: CounterType; key: keyof PlayerState; icon: string }[] = [
-  { type: 'Poison', key: 'poison', icon: '☠️' },
-  { type: 'CommanderTax', key: 'commanderTax', icon: '🪙' },
-  { type: 'Energy', key: 'energy', icon: '⚡' },
-  { type: 'Experience', key: 'experience', icon: '✨' },
-]
-
-interface Props {
-  game: GameState
-  player: PlayerState
-  pending: (key: string) => number
-  onCommanderDamage: (sourceUserId: string, delta: number) => void
-  onCounter: (counter: CounterType, delta: number) => void
-  onMonarch: () => void
-  onInitiative: () => void
-  onConcede: () => void
+export interface CounterActions {
+  adjustLife: (playerId: string, delta: number) => void
+  adjustPoison: (playerId: string, delta: number) => void
+  adjustCommander: (targetId: string, sourceId: string, delta: number) => void
+  /** Pending (optimistic) deltas, keyed like the actions. */
+  pendingLife: (playerId: string) => number
+  pendingPoison: (playerId: string) => number
+  pendingCommander: (targetId: string, sourceId: string) => number
 }
 
-export function PlayerDetails({ game, player, pending, onCommanderDamage, onCounter, onMonarch, onInitiative, onConcede }: Props) {
-  const { t } = useTranslation()
-  const isMonarch = game.monarchUserId === player.userId
-  const hasInitiative = game.initiativeUserId === player.userId
-
+function Stepper({ label, value, small, big, onStep, large = false }: { label: string; value: number; small: number; big: number; onStep: (d: number) => void; large?: boolean }) {
+  const btn = `rounded-xl bg-slate-700 font-black text-slate-100 active:bg-slate-600 ${large ? 'h-16 w-20 text-3xl' : 'h-11 w-14 text-xl'}`
   return (
-    <div className="flex flex-col gap-5">
-      <section>
-        <h3 className="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-400">{t('game.commanderDamage')}</h3>
-        <ul className="flex flex-col gap-2">
-          {game.players
-            .filter((source) => source.userId !== player.userId)
-            .map((source) => {
-              const value = (player.commanderDamage[source.userId] ?? 0) + pending(`cmd:${player.userId}:${source.userId}`)
-              return (
-                <Stepper
-                  key={source.userId}
-                  label={t('game.from', { name: source.displayName })}
-                  sub={source.commanderName}
-                  value={value}
-                  danger={value >= 21}
-                  onStep={(d) => onCommanderDamage(source.userId, d)}
-                />
-              )
-            })}
-        </ul>
-      </section>
-
-      <section>
-        <h3 className="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-400">{t('game.counters')}</h3>
-        <ul className="flex flex-col gap-2">
-          {counters.map((c) => {
-            const value = (player[c.key] as number) + pending(`counter:${player.userId}:${c.type}`)
-            return (
-              <Stepper
-                key={c.type}
-                label={`${c.icon} ${t(`counter.${c.type}`)}`}
-                sub={c.type === 'CommanderTax' && value > 0 ? `+${value * 2}` : undefined}
-                value={value}
-                danger={c.type === 'Poison' && value >= 10}
-                onStep={(d) => onCounter(c.type, d)}
-              />
-            )
-          })}
-        </ul>
-      </section>
-
-      <section className="grid grid-cols-2 gap-2">
-        <Button variant={isMonarch ? 'primary' : 'secondary'} onClick={onMonarch}>
-          👑 {t('game.monarch')}
-        </Button>
-        <Button variant={hasInitiative ? 'primary' : 'secondary'} onClick={onInitiative}>
-          🏰 {t('game.initiative')}
-        </Button>
-        <Button variant={player.conceded ? 'secondary' : 'danger'} className="col-span-2" onClick={onConcede}>
-          {player.conceded ? t('game.unconcede') : `🏳️ ${t('game.concede')}`}
-        </Button>
-      </section>
+    <div className="flex items-center justify-between gap-2">
+      <span className="text-sm text-slate-300">{label}</span>
+      <div className="flex items-center gap-2">
+        <HoldButton small={-small} big={-big} onStep={onStep} className={btn} aria-label={`${label} -`}>
+          −
+        </HoldButton>
+        <span className={`text-center font-black tabular-nums ${large ? 'w-24 text-6xl' : 'w-10 text-2xl'}`}>{value}</span>
+        <HoldButton small={small} big={big} onStep={onStep} className={btn} aria-label={`${label} +`}>
+          +
+        </HoldButton>
+      </div>
     </div>
   )
 }
 
-function Stepper({ label, sub, value, danger, onStep }: { label: string; sub?: string; value: number; danger?: boolean; onStep: (d: number) => void }) {
+/** Life, poison and received commander damage of one player. */
+export function PlayerCounters({ game, player, actions, large = false }: { game: GameState; player: PlayerState; actions: CounterActions; large?: boolean }) {
+  const { t } = useTranslation()
+  const id = player.playerId
   return (
-    <li className="flex items-center gap-2 rounded-xl bg-slate-800 p-2">
-      <div className="min-w-0 flex-1">
-        <p className="truncate">{label}</p>
-        {sub && <p className="truncate text-xs text-slate-400">{sub}</p>}
+    <div className="flex flex-col gap-4">
+      <Stepper large={large} label={t('game.life')} value={player.life + actions.pendingLife(id)} small={1} big={10} onStep={(d) => actions.adjustLife(id, d)} />
+      <Stepper label={t('game.poison')} value={player.poison + actions.pendingPoison(id)} small={1} big={1} onStep={(d) => actions.adjustPoison(id, d)} />
+      <div className="flex flex-col gap-2">
+        <h3 className="text-sm font-semibold text-slate-400">{t('game.commanderDamage')}</h3>
+        {game.players
+          .filter((p) => p.playerId !== id)
+          .map((source) => (
+            <Stepper
+              key={source.playerId}
+              label={t('game.from', { name: source.displayName })}
+              value={(player.commanderDamage[source.playerId] ?? 0) + actions.pendingCommander(id, source.playerId)}
+              small={1}
+              big={1}
+              onStep={(d) => actions.adjustCommander(id, source.playerId, d)}
+            />
+          ))}
       </div>
-      <HoldButton small={-1} big={-5} onStep={onStep} aria-label="-1" className="h-11 w-11 rounded-xl bg-slate-700 text-2xl">
-        −
-      </HoldButton>
-      <span className={`w-10 text-center text-2xl font-black tabular-nums ${danger ? 'text-rose-400' : ''}`}>{value}</span>
-      <HoldButton small={1} big={5} onStep={onStep} aria-label="+1" className="h-11 w-11 rounded-xl bg-slate-700 text-2xl">
-        +
-      </HoldButton>
-    </li>
+    </div>
+  )
+}
+
+/** Sheet to correct another player's counters. */
+export function PlayerDetails({ game, player, actions, onClose }: { game: GameState; player: PlayerState | null; actions: CounterActions; onClose: () => void }) {
+  const { t } = useTranslation()
+  return (
+    <Sheet open={player !== null} onClose={onClose} title={player ? `${t('game.fixPlayer')} · ${player.displayName}` : ''}>
+      {player && <PlayerCounters game={game} player={player} actions={actions} />}
+    </Sheet>
   )
 }

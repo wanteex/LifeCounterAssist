@@ -1,410 +1,274 @@
 using System.Collections.Concurrent;
+using System.Security.Cryptography;
 using System.Text.Json;
-using LifeCounterAssist.Api.Auth;
 using LifeCounterAssist.Api.Domain;
-using LifeCounterAssist.Api.Hubs;
 using LifeCounterAssist.Api.Infrastructure;
 
 namespace LifeCounterAssist.Api.Services;
 
-/// <summary>Game creation payload.</summary>
-/// <param name="MaxPlayers">Number of seats (2-8).</param>
-/// <param name="StartingLife">Starting life, 40 by default.</param>
-/// <param name="InvitedUserIds">Friends to invite.</param>
-/// <param name="DeckId">Deck the host plays.</param>
-public sealed record CreateGameRequest(int MaxPlayers = 4, int? StartingLife = null, List<string>? InvitedUserIds = null, string? DeckId = null);
+/// <summary>Request to create a game.</summary>
+/// <param name="Name">Host display name.</param>
+/// <param name="StartingLife">Starting life total.</param>
+/// <param name="Commander">Host commander, if any.</param>
+public sealed record CreateGameRequest(string Name, int StartingLife = 40, CommanderInfo? Commander = null);
 
-/// <summary>Join payload.</summary>
-/// <param name="DeckId">Deck the player plays.</param>
-public sealed record JoinGameRequest(string? DeckId);
+/// <summary>Request to join a game.</summary>
+/// <param name="Name">Display name.</param>
+/// <param name="Commander">Commander; on a reclaim, <see langword="null"/> keeps the current one.</param>
+public sealed record JoinGameRequest(string Name, CommanderInfo? Commander = null);
 
-/// <summary>Join-by-code payload.</summary>
-/// <param name="Code">Game join code.</param>
-/// <param name="DeckId">Deck the player plays.</param>
-public sealed record JoinByCodeRequest(string Code, string? DeckId);
+/// <summary>A seat handed to a participant; the token is a secret and never part of the game state.</summary>
+/// <param name="Game">Game state.</param>
+/// <param name="PlayerId">Seat owner.</param>
+/// <param name="SeatToken">Secret proving ownership of the seat.</param>
+/// <param name="Reclaimed">Whether an existing seat was taken back rather than a new one created.</param>
+public sealed record SeatDto(GameState Game, string PlayerId, string SeatToken, bool Reclaimed = false);
 
-/// <summary>Invite payload.</summary>
-/// <param name="UserIds">Friends to invite.</param>
-public sealed record InviteRequest(List<string> UserIds);
-
-/// <summary>Invitation returned by the API.</summary>
-/// <param name="GameId">Game identifier.</param>
-/// <param name="HostUserId">Host identifier.</param>
-/// <param name="HostName">Host name.</param>
-/// <param name="CreatedAt">Invitation date.</param>
-public sealed record InvitationDto(string GameId, string HostUserId, string HostName, DateTimeOffset CreatedAt);
-
-/// <summary>History entry returned by the API.</summary>
-/// <param name="GameId">Game identifier.</param>
+/// <summary>Lightweight game description for the lobby list.</summary>
+/// <param name="Id">Game identifier.</param>
+/// <param name="HostName">Host display name.</param>
+/// <param name="PlayerCount">Seated players.</param>
+/// <param name="StartingLife">Starting life total.</param>
 /// <param name="Status">Game status.</param>
 /// <param name="CreatedAt">Creation date.</param>
-/// <param name="FinishedAt">Finish date.</param>
-/// <param name="Won">Whether the user won.</param>
-/// <param name="WinnerName">Winner name.</param>
-/// <param name="PlayerCount">Number of players.</param>
-/// <param name="PlayerNames">Player names.</param>
-/// <param name="DeckName">Deck played.</param>
-/// <param name="CommanderName">Commander played.</param>
-/// <param name="FinalLife">Final life total.</param>
-public sealed record HistoryEntryDto(
-    string GameId, string Status, DateTimeOffset CreatedAt, DateTimeOffset? FinishedAt, bool Won, string? WinnerName,
-    int PlayerCount, string[] PlayerNames, string? DeckName, string? CommanderName, int? FinalLife);
+public sealed record GameSummaryDto(
+    string Id, string HostName, int PlayerCount, int StartingLife, GameStatus Status, DateTimeOffset CreatedAt);
 
-/// <summary>
-/// Owns game state: serializes mutations per game, persists to Table Storage and broadcasts changes.
-/// </summary>
-/// <remarks>
-/// State is cached in memory, so the API must run as a single replica (or use a SignalR backplane
-/// and distributed locking before scaling out).
-/// </remarks>
-public sealed class GameService(
-    TableStore store,
-    UserService users,
-    DeckService decks,
-    FriendService friends,
-    Notifier notifier,
-    TimeProvider clock)
+/// <summary>Owns the in-memory games, seat tokens and room-screen selection. Single instance only.</summary>
+public sealed class GameService(IGameNotifier notifier, TimeProvider clock, ILogger<GameService> logger)
 {
-    private const int JoinCodeLength = 5;
+    private static readonly TimeSpan FinishedDisplay = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan FinishedRetention = TimeSpan.FromMinutes(10);
+    private static readonly TimeSpan IdleRetention = TimeSpan.FromHours(6);
+    private const int MaxActiveGames = 20;
+
+    private readonly ConcurrentDictionary<string, GameState> _games = new();
+    private readonly ConcurrentDictionary<string, Dictionary<string, string>> _seats = new();
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _locks = new();
-    private readonly ConcurrentDictionary<string, GameState> _cache = new();
+    // Serializes list/screen computation and publication so concurrent actions cannot publish out of order.
+    private readonly SemaphoreSlim _publishGate = new(1, 1);
+    private string? _screenGameId;
 
-    /// <summary>Creates a game with the caller as host and sends invitations.</summary>
-    /// <param name="user">Current user.</param>
-    /// <param name="request">Settings.</param>
-    /// <param name="cancellationToken">Cancellation token.</param>
-    /// <returns>The new game.</returns>
-    public async Task<GameState> CreateAsync(CurrentUser user, CreateGameRequest request, CancellationToken cancellationToken = default)
+    /// <summary>Creates a game with the caller seated as host.</summary>
+    /// <param name="r">Creation request.</param>
+    /// <param name="ct">Cancellation token.</param>
+    /// <returns>The host seat.</returns>
+    /// <exception cref="DomainException">Thrown when too many games are active.</exception>
+    public async Task<SeatDto> CreateAsync(CreateGameRequest r, CancellationToken ct = default)
     {
-        var host = await BuildPlayerAsync(user, request.DeckId, cancellationToken);
-        var invited = await FilterFriendsAsync(user.Id, request.InvitedUserIds, cancellationToken);
-        var id = Guid.NewGuid().ToString("N");
-        var joinCode = await ReserveJoinCodeAsync(id, cancellationToken);
+        if (_games.Values.Count(g => g.Status is GameStatus.Lobby or GameStatus.InProgress) >= MaxActiveGames)
+            throw new DomainException("too_many_games");
 
-        var state = GameRules.Create(
-            id, joinCode, host, request.MaxPlayers, request.StartingLife ?? GameRules.CommanderStartingLife, invited, clock.GetUtcNow());
-
-        await SaveAsync(state, cancellationToken);
-        _cache[id] = state;
-        await SyncPlayerGamesAsync(state, cancellationToken);
-        await SendInvitationsAsync(state, host.DisplayName, state.InvitedUserIds, cancellationToken);
-        return state;
+        var gameId = Guid.NewGuid().ToString("N");
+        var playerId = NewId();
+        var state = GameRules.Create(gameId, playerId, r.Name, r.StartingLife, clock.GetUtcNow(), r.Commander);
+        var token = NewToken();
+        _seats[gameId] = new Dictionary<string, string> { [token] = playerId };
+        _locks[gameId] = new SemaphoreSlim(1, 1);
+        _games[gameId] = state;
+        await BroadcastAsync(state, ct);
+        return new SeatDto(Clone(state), playerId, token);
     }
 
-    /// <summary>Returns a game visible to the caller (player or invited).</summary>
-    /// <param name="user">Current user.</param>
+    /// <summary>Seats a player, or reclaims the seat of the same name with a fresh token.</summary>
     /// <param name="gameId">Game identifier.</param>
-    /// <param name="cancellationToken">Cancellation token.</param>
-    /// <returns>The game.</returns>
-    /// <exception cref="ForbiddenException">Thrown when the caller cannot see the game.</exception>
-    public async Task<GameState> GetForUserAsync(CurrentUser user, string gameId, CancellationToken cancellationToken = default)
+    /// <param name="r">Join request.</param>
+    /// <param name="ct">Cancellation token.</param>
+    /// <returns>The seat.</returns>
+    public async Task<SeatDto> JoinAsync(string gameId, JoinGameRequest r, CancellationToken ct = default)
     {
-        var state = await LoadAsync(gameId, cancellationToken);
-        if (state.FindPlayer(user.Id) is null && !state.InvitedUserIds.Contains(user.Id))
-            throw new ForbiddenException("not_a_participant");
-        return state;
-    }
-
-    /// <summary>Seats the caller in a lobby.</summary>
-    /// <param name="user">Current user.</param>
-    /// <param name="gameId">Game identifier.</param>
-    /// <param name="deckId">Deck to play.</param>
-    /// <param name="cancellationToken">Cancellation token.</param>
-    /// <returns>The updated game.</returns>
-    public async Task<GameState> JoinAsync(CurrentUser user, string gameId, string? deckId, CancellationToken cancellationToken = default)
-    {
-        var player = await BuildPlayerAsync(user, deckId, cancellationToken);
-        var state = await MutateCoreAsync(gameId, s => GameRules.Join(s, player, clock.GetUtcNow()), cancellationToken);
-        await store.DeleteAsync(Tables.Invitations, user.Id, gameId, cancellationToken);
-        await SyncPlayerGamesAsync(state, cancellationToken);
-        return state;
-    }
-
-    /// <summary>Seats the caller using a join code.</summary>
-    /// <param name="user">Current user.</param>
-    /// <param name="request">Code and deck.</param>
-    /// <param name="cancellationToken">Cancellation token.</param>
-    /// <returns>The updated game.</returns>
-    /// <exception cref="NotFoundException">Thrown when the code is unknown.</exception>
-    public async Task<GameState> JoinByCodeAsync(CurrentUser user, JoinByCodeRequest request, CancellationToken cancellationToken = default)
-    {
-        var index = await store.GetAsync<JoinCodeEntity>(Tables.Games, JoinCodeEntity.Partition, Codes.Normalize(request.Code), cancellationToken)
-            ?? throw new NotFoundException("game_not_found");
-        return await JoinAsync(user, index.GameId, request.DeckId, cancellationToken);
-    }
-
-    /// <summary>Removes the caller from a lobby.</summary>
-    /// <param name="user">Current user.</param>
-    /// <param name="gameId">Game identifier.</param>
-    /// <param name="cancellationToken">Cancellation token.</param>
-    /// <returns>A task.</returns>
-    public async Task LeaveAsync(CurrentUser user, string gameId, CancellationToken cancellationToken = default)
-    {
-        await MutateCoreAsync(gameId, s => GameRules.Leave(s, user.Id, clock.GetUtcNow()), cancellationToken);
-        await store.DeleteAsync(Tables.PlayerGames, user.Id, gameId, cancellationToken);
-    }
-
-    /// <summary>Invites more friends to a lobby.</summary>
-    /// <param name="user">Current user (must be seated).</param>
-    /// <param name="gameId">Game identifier.</param>
-    /// <param name="request">Friends to invite.</param>
-    /// <param name="cancellationToken">Cancellation token.</param>
-    /// <returns>The updated game.</returns>
-    public async Task<GameState> InviteAsync(CurrentUser user, string gameId, InviteRequest request, CancellationToken cancellationToken = default)
-    {
-        var invited = await FilterFriendsAsync(user.Id, request.UserIds, cancellationToken);
-        List<string> added = [];
-        var state = await MutateAsync(user, gameId, s =>
+        var gate = GateFor(gameId);
+        await gate.WaitAsync(ct);
+        try
         {
-            if (s.Status != GameStatus.Lobby) throw new DomainException("game_already_started");
-            foreach (var id in invited.Where(id => s.FindPlayer(id) is null && !s.InvitedUserIds.Contains(id)))
+            var current = GetOrThrow(gameId);
+            var copy = Clone(current);
+            var (player, reclaimed) = GameRules.Join(copy, NewId(), r.Name, clock.GetUtcNow(), r.Commander);
+            var commanderChanged = current.FindPlayer(player.PlayerId)?.Commander != player.Commander;
+            var token = NewToken();
+            var seats = _seats[gameId];
+            lock (seats)
             {
-                s.InvitedUserIds.Add(id);
-                added.Add(id);
+                foreach (var old in seats.Where(kv => kv.Value == player.PlayerId).Select(kv => kv.Key).ToList())
+                    seats.Remove(old);
+                seats[token] = player.PlayerId;
             }
 
-            s.Version++;
-        }, cancellationToken);
-        await SendInvitationsAsync(state, state.FindPlayer(user.Id)!.DisplayName, added, cancellationToken);
-        return state;
-    }
-
-    /// <summary>Applies an action from a seated player, then persists and broadcasts the new state.</summary>
-    /// <param name="user">Current user (must be seated).</param>
-    /// <param name="gameId">Game identifier.</param>
-    /// <param name="action">Mutation to apply.</param>
-    /// <param name="cancellationToken">Cancellation token.</param>
-    /// <returns>The updated game.</returns>
-    /// <exception cref="ForbiddenException">Thrown when the caller is not seated.</exception>
-    public async Task<GameState> MutateAsync(CurrentUser user, string gameId, Action<GameState> action, CancellationToken cancellationToken = default)
-    {
-        var previousStatus = GameStatus.Lobby;
-        var state = await MutateCoreAsync(gameId, s =>
-        {
-            if (s.FindPlayer(user.Id) is null) throw new ForbiddenException("not_a_player");
-            previousStatus = s.Status;
-            action(s);
-        }, cancellationToken);
-
-        if (state.Status != previousStatus)
-        {
-            await SyncPlayerGamesAsync(state, cancellationToken);
-            if (state.Status == GameStatus.InProgress) await ClearInvitationsAsync(state, cancellationToken);
-            if (state.Status == GameStatus.Finished) _cache.TryRemove(state.Id, out _);
+            _games[gameId] = copy;
+            // A plain reclaim does not change the state; a reclaim with a different commander does.
+            if (!reclaimed || commanderChanged) await BroadcastAsync(copy, ct);
+            return new SeatDto(Clone(copy), player.PlayerId, token, reclaimed);
         }
-
-        return state;
+        finally { gate.Release(); }
     }
 
-    /// <summary>Sets the deck a seated player uses.</summary>
-    /// <param name="user">Current user.</param>
+    /// <summary>Gets a game.</summary>
     /// <param name="gameId">Game identifier.</param>
-    /// <param name="deckId">Deck identifier, or <see langword="null"/> to clear.</param>
-    /// <param name="cancellationToken">Cancellation token.</param>
-    /// <returns>The updated game.</returns>
-    public async Task<GameState> SelectDeckAsync(CurrentUser user, string gameId, string? deckId, CancellationToken cancellationToken = default)
-    {
-        var deck = await GetDeckInfoAsync(user.Id, deckId, cancellationToken);
-        var state = await MutateAsync(user, gameId, s => GameRules.SelectDeck(s, user.Id, deck), cancellationToken);
-        await SyncPlayerGamesAsync(state, cancellationToken);
-        return state;
-    }
+    /// <returns>A copy of the game state.</returns>
+    /// <exception cref="NotFoundException">Thrown when the game does not exist.</exception>
+    public GameState Get(string gameId) => Clone(GetOrThrow(gameId));
 
-    /// <summary>Lists pending invitations of the caller.</summary>
-    /// <param name="user">Current user.</param>
-    /// <param name="cancellationToken">Cancellation token.</param>
-    /// <returns>Invitations, newest first.</returns>
-    public async Task<List<InvitationDto>> ListInvitationsAsync(CurrentUser user, CancellationToken cancellationToken = default) =>
-        (await store.QueryPartitionAsync<InvitationEntity>(Tables.Invitations, user.Id, cancellationToken))
-            .OrderByDescending(i => i.CreatedAt)
-            .Select(i => new InvitationDto(i.RowKey, i.HostUserId, i.HostName, i.CreatedAt))
-            .ToList();
-
-    /// <summary>Declines an invitation.</summary>
-    /// <param name="user">Current user.</param>
-    /// <param name="gameId">Game identifier.</param>
-    /// <param name="cancellationToken">Cancellation token.</param>
-    /// <returns>A task.</returns>
-    public async Task DeclineInvitationAsync(CurrentUser user, string gameId, CancellationToken cancellationToken = default)
-    {
-        await store.DeleteAsync(Tables.Invitations, user.Id, gameId, cancellationToken);
-        try
-        {
-            await MutateCoreAsync(gameId, s =>
-            {
-                if (s.InvitedUserIds.Remove(user.Id)) s.Version++;
-            }, cancellationToken);
-        }
-        catch (NotFoundException)
-        {
-            // Game no longer exists; removing the invitation is enough.
-        }
-    }
-
-    /// <summary>Lists the caller's games, newest first.</summary>
-    /// <param name="user">Current user.</param>
-    /// <param name="cancellationToken">Cancellation token.</param>
-    /// <returns>History entries.</returns>
-    public async Task<List<HistoryEntryDto>> HistoryAsync(CurrentUser user, CancellationToken cancellationToken = default) =>
-        (await store.QueryPartitionAsync<PlayerGameEntity>(Tables.PlayerGames, user.Id, cancellationToken))
+    /// <summary>Lists lobby and in-progress games, most recent first.</summary>
+    /// <returns>Game summaries.</returns>
+    public IReadOnlyList<GameSummaryDto> List() =>
+        _games.Values
+            .Where(g => g.Status is GameStatus.Lobby or GameStatus.InProgress)
             .OrderByDescending(g => g.CreatedAt)
-            .Select(g => new HistoryEntryDto(
-                g.RowKey, g.Status, g.CreatedAt, g.FinishedAt, g.Won, g.WinnerName, g.PlayerCount,
-                g.PlayerNames.Split('\n', StringSplitOptions.RemoveEmptyEntries), g.DeckName, g.CommanderName, g.FinalLife))
+            .Select(g => new GameSummaryDto(
+                g.Id,
+                g.FindPlayer(g.HostPlayerId)?.DisplayName ?? "",
+                g.Players.Count,
+                g.StartingLife,
+                g.Status,
+                g.CreatedAt))
             .ToList();
 
-    private async Task<GameState> MutateCoreAsync(string gameId, Action<GameState> action, CancellationToken cancellationToken)
+    /// <summary>Picks the game to show on the room screen.</summary>
+    /// <returns>A copy of the featured game, or <see langword="null"/>.</returns>
+    public GameState? GetFeatured()
     {
-        var gate = _locks.GetOrAdd(gameId, _ => new SemaphoreSlim(1, 1));
-        await gate.WaitAsync(cancellationToken);
+        var now = clock.GetUtcNow();
+        var games = _games.Values.ToList();
+
+        var game =
+            games.Where(g => g.Status == GameStatus.InProgress).MaxBy(g => g.StartedAt ?? g.CreatedAt)
+            ?? games.Where(g => g.Status == GameStatus.Finished && g.FinishedAt is { } f && now - f < FinishedDisplay)
+                .MaxBy(g => g.FinishedAt)
+            ?? games.Where(g => g.Status == GameStatus.Lobby).MaxBy(g => g.CreatedAt);
+        return game is null ? null : Clone(game);
+    }
+
+    /// <summary>Applies an action on behalf of a seat owner.</summary>
+    /// <param name="gameId">Game identifier.</param>
+    /// <param name="seatToken">Caller's seat token.</param>
+    /// <param name="action">Action receiving the state and the caller's player identifier.</param>
+    /// <param name="ct">Cancellation token.</param>
+    /// <returns>The new state.</returns>
+    /// <exception cref="NotFoundException">Thrown when the game does not exist.</exception>
+    /// <exception cref="ForbiddenException">Thrown when the token is not a seat of this game.</exception>
+    public async Task<GameState> ActAsync(
+        string gameId, string seatToken, Action<GameState, string> action, CancellationToken ct = default)
+    {
+        var gate = GateFor(gameId);
+        await gate.WaitAsync(ct);
         try
         {
-            var state = await LoadAsync(gameId, cancellationToken);
+            var current = GetOrThrow(gameId);
+            string? playerId = null;
+            var seats = _seats[gameId];
+            lock (seats)
+            {
+                if (seatToken is not null) seats.TryGetValue(seatToken, out playerId);
+            }
 
-            // Mutate a copy so a failing rule or save never leaves a half-applied cached state.
-            var working = Clone(state);
-            var version = working.Version;
-            action(working);
-            if (working.Version == version) return state;
+            // A seat whose player left the game is no longer valid.
+            if (playerId is null || current.FindPlayer(playerId) is null) throw new ForbiddenException("invalid_seat");
 
-            await SaveAsync(working, cancellationToken);
-            _cache[gameId] = working;
-            await notifier.GameUpdatedAsync(working, cancellationToken);
-            return working;
+            var copy = Clone(current);
+            action(copy, playerId);
+            if (copy.FindPlayer(playerId) is null)
+            {
+                lock (seats)
+                {
+                    foreach (var old in seats.Where(kv => kv.Value == playerId).Select(kv => kv.Key).ToList())
+                        seats.Remove(old);
+                }
+            }
+
+            _games[gameId] = copy;
+            await BroadcastAsync(copy, ct);
+            return Clone(copy);
         }
-        finally
-        {
-            gate.Release();
-        }
+        finally { gate.Release(); }
     }
 
-    private async Task<GameState> LoadAsync(string gameId, CancellationToken cancellationToken)
+    /// <summary>Completes elapsed finish countdowns and removes expired games.</summary>
+    /// <param name="ct">Cancellation token.</param>
+    /// <returns>A task.</returns>
+    public async Task TickAsync(CancellationToken ct = default)
     {
-        if (_cache.TryGetValue(gameId, out var cached)) return cached;
-        var entity = await store.GetAsync<GameEntity>(Tables.Games, gameId, GameEntity.StateRow, cancellationToken)
-            ?? throw new NotFoundException("game_not_found");
-        var state = JsonSerializer.Deserialize<GameState>(entity.StateJson, JsonDefaults.Options)
-            ?? throw new NotFoundException("game_not_found");
-        if (state.Status != GameStatus.Finished) _cache[gameId] = state;
-        return state;
+        var removed = false;
+        var now = clock.GetUtcNow();
+
+        foreach (var id in _games.Keys.ToList())
+        {
+            if (!_locks.TryGetValue(id, out var gate)) continue;
+            await gate.WaitAsync(ct);
+            try
+            {
+                if (!_games.TryGetValue(id, out var current)) continue;
+                var copy = Clone(current);
+                if (GameRules.CompletePendingFinish(copy, now))
+                {
+                    _games[id] = copy;
+                    await BroadcastAsync(copy, ct);
+                }
+                else if (IsExpired(current, now))
+                {
+                    _games.TryRemove(id, out _);
+                    _seats.TryRemove(id, out _);
+                    _locks.TryRemove(id, out _);
+                    removed = true;
+                }
+            }
+            finally { gate.Release(); }
+        }
+
+        // Completed games already broadcast list and screen; only removals and the 30 s display expiry remain.
+        await _publishGate.WaitAsync(ct);
+        try
+        {
+            var screen = GetFeatured();
+            if (removed) await NotifySafelyAsync(() => notifier.ListChangedAsync(List(), ct), "list");
+            if (removed || screen?.Id != _screenGameId) await PublishScreenAsync(screen, ct);
+        }
+        finally { _publishGate.Release(); }
     }
 
-    private Task SaveAsync(GameState state, CancellationToken cancellationToken) =>
-        store.UpsertAsync(Tables.Games, new GameEntity
+    private static bool IsExpired(GameState g, DateTimeOffset now) =>
+        now - g.LastActivityAt > IdleRetention
+        || (g.Status is GameStatus.Finished or GameStatus.Cancelled
+            && now - (g.FinishedAt ?? g.LastActivityAt) > FinishedRetention);
+
+    private async Task BroadcastAsync(GameState state, CancellationToken ct)
+    {
+        await NotifySafelyAsync(() => notifier.GameUpdatedAsync(Clone(state), ct), "game");
+        await _publishGate.WaitAsync(ct);
+        try
         {
-            PartitionKey = state.Id,
-            RowKey = GameEntity.StateRow,
-            Status = state.Status.ToString(),
-            StateJson = JsonSerializer.Serialize(state, JsonDefaults.Options),
-        }, cancellationToken);
+            await NotifySafelyAsync(() => notifier.ListChangedAsync(List(), ct), "list");
+            await PublishScreenAsync(GetFeatured(), ct);
+        }
+        finally { _publishGate.Release(); }
+    }
+
+    // Must be called while holding _publishGate.
+    private async Task PublishScreenAsync(GameState? featured, CancellationToken ct)
+    {
+        _screenGameId = featured?.Id;
+        await NotifySafelyAsync(() => notifier.ScreenChangedAsync(featured, ct), "screen");
+    }
+
+    // The state change is already committed: a notification failure must never surface as an action error.
+    private async Task NotifySafelyAsync(Func<Task> notify, string what)
+    {
+        try { await notify(); }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogError(ex, "Failed to publish {Notification} notification", what);
+        }
+    }
+
+    private GameState GetOrThrow(string gameId) =>
+        _games.TryGetValue(gameId, out var state) ? state : throw new NotFoundException("game_not_found");
+
+    private SemaphoreSlim GateFor(string gameId) =>
+        _locks.TryGetValue(gameId, out var gate) ? gate : throw new NotFoundException("game_not_found");
 
     private static GameState Clone(GameState state) =>
         JsonSerializer.Deserialize<GameState>(JsonSerializer.Serialize(state, JsonDefaults.Options), JsonDefaults.Options)!;
 
-    private async Task<string> ReserveJoinCodeAsync(string gameId, CancellationToken cancellationToken)
-    {
-        for (var attempt = 0; attempt < 10; attempt++)
-        {
-            var code = Codes.New(JoinCodeLength);
-            var index = new JoinCodeEntity { PartitionKey = JoinCodeEntity.Partition, RowKey = code, GameId = gameId };
-            if (await store.TryAddAsync(Tables.Games, index, cancellationToken)) return code;
+    private static string NewId() => Guid.NewGuid().ToString("N")[..12];
 
-            // Codes of finished games can be recycled.
-            var existing = await store.GetAsync<JoinCodeEntity>(Tables.Games, JoinCodeEntity.Partition, code, cancellationToken);
-            var game = existing is null ? null : await store.GetAsync<GameEntity>(Tables.Games, existing.GameId, GameEntity.StateRow, cancellationToken);
-            if (game is null || game.Status == nameof(GameStatus.Finished))
-            {
-                await store.UpsertAsync(Tables.Games, index, cancellationToken);
-                return code;
-            }
-        }
-
-        throw new InvalidOperationException("Could not allocate a join code.");
-    }
-
-    private async Task<PlayerState> BuildPlayerAsync(CurrentUser user, string? deckId, CancellationToken cancellationToken)
-    {
-        var profile = await users.EnsureProfileAsync(user, cancellationToken);
-        var deck = await GetDeckInfoAsync(user.Id, deckId, cancellationToken);
-        return new PlayerState
-        {
-            UserId = user.Id,
-            DisplayName = profile.DisplayName,
-            DeckId = deck?.Id,
-            DeckName = deck?.Name,
-            CommanderName = deck?.CommanderName,
-            CommanderImageUrl = deck?.CommanderImageUrl,
-        };
-    }
-
-    private async Task<DeckInfo?> GetDeckInfoAsync(string userId, string? deckId, CancellationToken cancellationToken)
-    {
-        if (string.IsNullOrWhiteSpace(deckId)) return null;
-        var deck = await decks.GetAsync(userId, deckId, cancellationToken) ?? throw new NotFoundException("deck_not_found");
-        return new DeckInfo(deck.RowKey, deck.Name, deck.CommanderName, deck.CommanderImageUrl);
-    }
-
-    private async Task<List<string>> FilterFriendsAsync(string userId, List<string>? candidates, CancellationToken cancellationToken)
-    {
-        List<string> result = [];
-        foreach (var id in (candidates ?? []).Distinct().Take(GameRules.MaxPlayersLimit * 2))
-        {
-            if (await friends.AreFriendsAsync(userId, id, cancellationToken)) result.Add(id);
-        }
-
-        return result;
-    }
-
-    private async Task SendInvitationsAsync(GameState state, string hostName, IEnumerable<string> userIds, CancellationToken cancellationToken)
-    {
-        foreach (var id in userIds)
-        {
-            var invitation = new InvitationEntity
-            {
-                PartitionKey = id,
-                RowKey = state.Id,
-                HostUserId = state.HostUserId,
-                HostName = hostName,
-                CreatedAt = clock.GetUtcNow(),
-            };
-            await store.UpsertAsync(Tables.Invitations, invitation, cancellationToken);
-            await notifier.InvitationsChangedAsync(id, cancellationToken);
-        }
-    }
-
-    private async Task ClearInvitationsAsync(GameState state, CancellationToken cancellationToken)
-    {
-        // Rules clear InvitedUserIds on start, so remove every invitation row pointing at this game.
-        await foreach (var invitation in store.Table(Tables.Invitations)
-            .QueryAsync<InvitationEntity>(i => i.RowKey == state.Id, cancellationToken: cancellationToken))
-        {
-            await store.DeleteAsync(Tables.Invitations, invitation.PartitionKey, invitation.RowKey, cancellationToken);
-            await notifier.InvitationsChangedAsync(invitation.PartitionKey, cancellationToken);
-        }
-    }
-
-    private async Task SyncPlayerGamesAsync(GameState state, CancellationToken cancellationToken)
-    {
-        var winner = state.WinnerUserId is null ? null : state.FindPlayer(state.WinnerUserId);
-        var names = string.Join('\n', state.Players.Select(p => p.DisplayName));
-        foreach (var player in state.Players)
-        {
-            var entity = new PlayerGameEntity
-            {
-                PartitionKey = player.UserId,
-                RowKey = state.Id,
-                Status = state.Status.ToString(),
-                CreatedAt = state.CreatedAt,
-                FinishedAt = state.FinishedAt,
-                Won = state.WinnerUserId == player.UserId,
-                WinnerName = winner?.DisplayName,
-                PlayerCount = state.Players.Count,
-                PlayerNames = names,
-                DeckName = player.DeckName,
-                CommanderName = player.CommanderName,
-                FinalLife = state.Status == GameStatus.Finished ? player.Life : null,
-            };
-            await store.UpsertAsync(Tables.PlayerGames, entity, cancellationToken);
-        }
-    }
+    private static string NewToken() => Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(16));
 }

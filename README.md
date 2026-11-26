@@ -1,132 +1,74 @@
 ---
 title: Life Counter Assist
-description: Compteur de points de vie partagé en temps réel pour Magic The Gathering (Commander), en PWA mobile avec une API .NET et SignalR
-ms.date: 2026-05-07
+description: Compteur de points de vie partagé pour Magic The Gathering (Commander) en salle de réunion, avec un écran de salle, sans compte ni installation
+ms.date: 2026-11-26
 ms.topic: overview
 ---
 
 ## Présentation
 
-Life Counter Assist est une web app mobile (PWA) qui sert de compteur de points de vie partagé pour Magic The Gathering, pensée d'abord pour le format Commander. Chaque joueur utilise son propre téléphone et voit le même plateau, synchronisé en temps réel.
+Life Counter Assist sert à jouer à Magic (format Commander) entre collègues dans une salle de réunion. Le PC de la salle affiche un QR code sur `/ecran`. Chacun le scanne avec son téléphone, tape un pseudo et rejoint la partie. Aucun compte, aucune installation.
 
-Fonctionnalités du MVP :
-
-* Création d'une partie (2 à 8 joueurs, 20/25/30/40 PV) avec invitation d'amis ou code à 5 caractères
-* Plateau partagé : PV, dégâts de commandant par source, poison, taxe de commandant, énergie, expérience, monarque, initiative, abandon
-* Tap pour ±1, appui long pour ±10, mise à jour optimiste et journal de partie
-* Profil avec statistiques et historique des parties
-* Decks ajoutés par lien (Archidekt importé, Moxfield en best effort) ou par nom de commandant via Scryfall, avec l'illustration du commandant en fond de tuile
-* Amis via un code ami, avec demandes et acceptation en direct
-* Interface en français et en anglais
-* Installation sur l'écran d'accueil, écran maintenu allumé pendant une partie
+* Accueil : liste des parties en cours, création d'une partie avec un seul choix (PV de départ : 20, 25, 30 ou 40)
+* Lobby en direct, le créateur démarre la partie (2 à 8 joueurs)
+* Sur chaque téléphone : PV (tap ±1, appui long ±10), poison, dégâts de commandant par adversaire
+* Sur l'écran de la salle : QR code au repos, lobby, puis un tableau des PV de tous les joueurs en grand
+* Fin automatique avec compte à rebours de 10 s quand il ne reste qu'un joueur
+* Reprise de sa place en rejoignant avec le même pseudo
 
 ## Architecture
 
 ```text
-Téléphone (PWA React)  ──HTTPS/REST──►  API .NET 10 (Container App, 1 réplique)
-        ▲                                   │
-        └──────── SignalR (WebSocket) ◄─────┤
-                                            ▼
-                                Azure Table Storage (identité managée)
-Connexion : Microsoft Entra External ID (Google)
+Téléphones (React)    ──REST + SignalR──►  App .NET 10 (1 conteneur, 1 instance)
+PC de la salle /ecran ──SignalR (lecture)─┘   sert aussi le front (wwwroot)
+                                              état des parties en mémoire
 ```
 
-| Dossier              | Contenu                                                                     |
-|----------------------|-----------------------------------------------------------------------------|
-| `backend/`           | API ASP.NET Core (minimal API + hub SignalR `/hubs/game`), tests xUnit      |
-| `frontend/`          | React 19, Vite, Tailwind CSS, i18next, MSAL, client SignalR, service worker |
-| `infra/bicep/`       | Infrastructure Azure (Container Apps, ACR, Storage, Log Analytics)          |
-| `docker-compose.yml` | Stack locale : Azurite, API, web                                            |
+| Dossier              | Contenu                                                                  |
+|----------------------|--------------------------------------------------------------------------|
+| `backend/`           | API ASP.NET Core (REST, hub SignalR `/hubs/game`, `/health`), tests xUnit |
+| `frontend/`          | React 19, Vite, Tailwind CSS, i18next, client SignalR                    |
+| `Dockerfile`         | Image unique : build du front, publication de l'API, front dans `wwwroot` |
+| `infra/bicep/`       | Azure : Container Apps (une app), ACR, Log Analytics, identité managée   |
+| `docker-compose.yml` | Lance l'image unique en local                                            |
 
-L'API garde l'état des parties en cours en mémoire, avec un verrou par partie, et persiste chaque modification dans Table Storage. Elle doit donc tourner sur une seule réplique.
+L'API sert le front compilé : même origine, pas de CORS ni de configuration côté client. Les routes `/api/...` inconnues renvoient 404.
 
 ## Développement local
 
-Prérequis : .NET SDK 10, Node.js 22 ou plus, et Azurite (via Docker ou `npx azurite`).
-
-En local, l'authentification passe en mode Dev : tu saisis un pseudo et l'API fait confiance au jeton `dev:{id}:{nom}`. Ce mode est refusé hors de l'environnement `Development`.
-
-### Sans Docker
+Prérequis : .NET SDK 10 et Node.js 22 ou plus.
 
 ```powershell
-# Terminal 1 : émulateur de stockage
-npx azurite@latest --silent --location $env:TEMP\lca-azurite
-
-# Terminal 2 : API sur http://localhost:5075
+# Terminal 1 : API sur http://localhost:5075
 cd backend\src\LifeCounterAssist.Api
 dotnet run --launch-profile http
 
-# Terminal 3 : front sur http://localhost:5180
+# Terminal 2 : front sur http://localhost:5180 (proxy vers l'API)
 cd frontend
 npm install
 npm run dev
 ```
 
-Pour tester à plusieurs, ouvre l'app dans deux navigateurs (ou une fenêtre privée) avec deux pseudos différents. Depuis un téléphone sur le même réseau, remplace `localhost` par l'IP du poste dans `frontend/public/config.js` et dans `Cors:AllowedOrigins` de `appsettings.Development.json`.
+Pour tester à plusieurs, ouvre l'app dans deux navigateurs (ou une fenêtre privée) avec deux pseudos. La page de la salle est sur <http://localhost:5180/ecran>.
 
-### Avec Docker Compose
-
-```powershell
-docker compose up --build
-```
-
-L'app est servie sur <http://localhost:8080> et l'API sur <http://localhost:5075>.
-
-### Tests et build
+Tests et build :
 
 ```powershell
 cd backend; dotnet test
 cd ..\frontend; npm run build
 ```
 
-## Configuration
+## Docker
 
-### API
+```powershell
+docker compose up --build
+```
 
-| Variable                           | Rôle                                                           |
-|------------------------------------|----------------------------------------------------------------|
-| `Auth__Mode`                       | `Entra` (défaut) ou `Dev` (uniquement en Development)          |
-| `Auth__Authority`                  | Autorité des jetons (voir la section Entra External ID)        |
-| `Auth__Audience`                   | Audiences acceptées, séparées par des virgules                 |
-| `Storage__ConnectionString`        | Chaîne de connexion (Azurite)                                  |
-| `Storage__TableEndpoint`           | Endpoint Table, utilisé avec l'identité managée                |
-| `Storage__ManagedIdentityClientId` | Client id de l'identité managée user-assigned                  |
-| `Cors__AllowedOrigins__0`          | Origine du front                                               |
-
-### Front
-
-Le conteneur nginx génère `config.js` au démarrage. La même image sert donc pour tous les environnements.
-
-| Variable          | Rôle                                                |
-|-------------------|-----------------------------------------------------|
-| `API_URL`         | URL publique de l'API                               |
-| `AUTH_MODE`       | `entra` ou `dev`                                    |
-| `ENTRA_CLIENT_ID` | Client id de l'application SPA                      |
-| `ENTRA_AUTHORITY` | `https://<sous-domaine>.ciamlogin.com/`             |
-| `ENTRA_API_SCOPE` | `api://<api-client-id>/access_as_user`              |
-
-## Mise en place de Microsoft Entra External ID
-
-1. Crée un tenant externe dans le centre d'administration Microsoft Entra (External Identities). Note son sous-domaine et son tenant id.
-2. Enregistre l'application API (`lca-api`) :
-   * Expose an API : App ID URI `api://<api-client-id>` et scope délégué `access_as_user`
-   * Dans le manifeste, `requestedAccessTokenVersion` doit valoir `2`
-3. Enregistre l'application SPA (`lca-spa`) :
-   * Plateforme Single-page application, URI de redirection `https://<url-du-web>` et `http://localhost:5180`
-   * API permissions : `lca-api` / `access_as_user`, puis accorde le consentement administrateur
-4. Configure Google comme fournisseur d'identité :
-   * Dans Google Cloud Console, crée un client OAuth « Web application » avec les URI de redirection `https://<tenant-id>.ciamlogin.com/<tenant-id>/federation/oauth2` et `https://<sous-domaine>.ciamlogin.com/<tenant-id>/federation/oauth2`
-   * Dans External Identities, ajoute Google avec ce client id et ce secret
-5. Crée un user flow « Inscription et connexion » avec Google (et l'e-mail si tu veux), collecte l'attribut Display Name, puis associe-lui l'application `lca-spa`.
-
-Les valeurs obtenues alimentent le paramètre `auth` de `infra/bicep/main.bicepparam`.
-
-> [!NOTE]
-> Si le jeton d'accès ne contient pas de claim `name`, l'API utilise la partie locale de l'e-mail, ou « Player ». Chaque joueur peut changer son nom depuis son profil.
+L'app est servie sur <http://localhost:8080> (écran de salle sur `/ecran`, santé sur `/health`).
 
 ## Déploiement sur Azure
 
-L'infrastructure se déploie en deux passes : la première crée le registre, le stockage et l'identité, la seconde crée les Container Apps une fois les images poussées.
+L'infrastructure se déploie en deux passes : la première crée le registre et l'identité, la seconde crée la Container App une fois l'image poussée.
 
 ```powershell
 $rg = "rg-lca-prod-001"
@@ -136,20 +78,19 @@ az group create --name $rg --location francecentral
 az deployment group create --resource-group $rg --template-file infra/bicep/main.bicep --parameters infra/bicep/main.bicepparam
 $acr = az deployment group show --resource-group $rg --name main --query properties.outputs.registryName.value -o tsv
 
-# 2. Images, construites dans ACR (pas besoin de Docker en local)
+# 2. Image, construite dans ACR (pas besoin de Docker en local)
 $tag = "1.0.0"
-az acr build --registry $acr --image "lca-api:$tag" backend
-az acr build --registry $acr --image "lca-web:$tag" frontend
+az acr build --registry $acr --image "lca-app:$tag" .
 
-# 3. Applications
+# 3. Application
 az deployment group create --resource-group $rg --template-file infra/bicep/main.bicep --parameters infra/bicep/main.bicepparam --parameters imageTag=$tag
 ```
 
-La sortie `webUrl` donne l'URL de l'app : ajoute-la comme URI de redirection de l'application SPA. Pour une mise à jour, reconstruis les images avec un nouveau tag puis relance l'étape 3.
+La sortie `appUrl` donne l'URL publique : c'est elle qu'encode le QR code (ouvre `<appUrl>/ecran` sur le PC de la salle). Pour une mise à jour, reconstruis l'image avec un nouveau tag puis relance l'étape 3.
 
 ## Limites connues
 
-* L'API doit rester sur une seule réplique (état en mémoire, verrou par partie). Passer à plusieurs instances demanderait Azure SignalR Service et un verrou distribué.
-* L'import Moxfield dépend d'une API non officielle et peut échouer. Le deck est alors créé avec le nom et le commandant saisis (illustration et couleurs via Scryfall).
-* Le journal d'une partie garde les 100 dernières entrées.
-* Le Blob Storage n'est pas encore utilisé (piste : avatars).
+* L'état des parties est en mémoire : un redémarrage du serveur les perd.
+* Une seule instance (min 1 / max 1). Passer à plusieurs demanderait Azure SignalR Service et un état partagé.
+* L'URL est publique et sans protection : quiconque la connaît peut voir `/ecran` et rejoindre une partie.
+* Les parties terminées sont purgées après 10 minutes, celles inactives après 6 heures.

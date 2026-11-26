@@ -23,8 +23,15 @@ export function useGame(gameId: string) {
         .then((state) => {
           apply(state)
           setConnected(true)
+          setError(null)
         })
-        .catch((e) => active && setError(errorCode(e)))
+        .catch((e) => {
+          if (!active) return
+          const code = errorCode(e)
+          // The server forgot this game (e.g. restarted): a stale board must not persist.
+          if (code === 'game_not_found') setGame(null)
+          setError(code)
+        })
 
     let cleanupHub = () => {}
     getHub()

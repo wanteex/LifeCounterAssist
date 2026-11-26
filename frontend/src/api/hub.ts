@@ -1,7 +1,6 @@
 import { HubConnectionBuilder, HubConnectionState, LogLevel, type HubConnection } from '@microsoft/signalr'
-import { authClient } from '../auth/authClient'
 import { config } from '../config'
-import type { CounterType, GameState } from './types'
+import type { GameState, GameSummary } from './types'
 
 type Listener = () => void
 
@@ -16,7 +15,7 @@ export function getHub(): Promise<HubConnection> {
 
   if (!connection) {
     connection = new HubConnectionBuilder()
-      .withUrl(`${config.apiUrl}/hubs/game`, { accessTokenFactory: () => authClient.getToken() })
+      .withUrl(`${config.apiUrl}/hubs/game`)
       .withAutomaticReconnect([0, 1000, 2000, 5000, 10000, 10000, 30000])
       .configureLogging(LogLevel.Warning)
       .build()
@@ -63,15 +62,19 @@ async function invoke<T = void>(method: string, ...args: unknown[]): Promise<T> 
 export const gameHub = {
   watch: (gameId: string) => invoke<GameState>('Watch', gameId),
   unwatch: (gameId: string) => invoke('Unwatch', gameId),
-  adjustLife: (gameId: string, targetUserId: string, delta: number) => invoke('AdjustLife', gameId, targetUserId, delta),
-  adjustCommanderDamage: (gameId: string, targetUserId: string, sourceUserId: string, delta: number) =>
-    invoke('AdjustCommanderDamage', gameId, targetUserId, sourceUserId, delta),
-  adjustCounter: (gameId: string, targetUserId: string, counter: CounterType, delta: number) =>
-    invoke('AdjustCounter', gameId, targetUserId, counter, delta),
-  setMonarch: (gameId: string, userId: string | null) => invoke('SetMonarch', gameId, userId),
-  setInitiative: (gameId: string, userId: string | null) => invoke('SetInitiative', gameId, userId),
-  toggleConcede: (gameId: string, targetUserId: string) => invoke('ToggleConcede', gameId, targetUserId),
-  start: (gameId: string) => invoke('StartGame', gameId),
-  finish: (gameId: string, winnerUserId: string | null) => invoke('FinishGame', gameId, winnerUserId),
-  selectDeck: (gameId: string, deckId: string | null) => invoke('SelectDeck', gameId, deckId),
+  watchList: () => invoke<GameSummary[]>('WatchList'),
+  watchScreen: () => invoke<GameState | null>('WatchScreen'),
+  startGame: (gameId: string, seatToken: string) => invoke('StartGame', gameId, seatToken),
+  cancelGame: (gameId: string, seatToken: string) => invoke('CancelGame', gameId, seatToken),
+  leaveGame: (gameId: string, seatToken: string) => invoke('LeaveGame', gameId, seatToken),
+  adjustLife: (gameId: string, seatToken: string, targetPlayerId: string, delta: number) =>
+    invoke('AdjustLife', gameId, seatToken, targetPlayerId, delta),
+  adjustCommanderDamage: (gameId: string, seatToken: string, targetPlayerId: string, sourcePlayerId: string, delta: number) =>
+    invoke('AdjustCommanderDamage', gameId, seatToken, targetPlayerId, sourcePlayerId, delta),
+  adjustPoison: (gameId: string, seatToken: string, targetPlayerId: string, delta: number) =>
+    invoke('AdjustPoison', gameId, seatToken, targetPlayerId, delta),
+  toggleConcede: (gameId: string, seatToken: string, targetPlayerId: string) =>
+    invoke('ToggleConcede', gameId, seatToken, targetPlayerId),
+  cancelPendingFinish: (gameId: string, seatToken: string) => invoke('CancelPendingFinish', gameId, seatToken),
+  finishGame: (gameId: string, seatToken: string) => invoke('FinishGame', gameId, seatToken),
 }

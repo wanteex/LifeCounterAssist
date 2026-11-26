@@ -9,11 +9,13 @@ namespace LifeCounterAssist.Api.Services;
 /// <summary>Request to create a game.</summary>
 /// <param name="Name">Host display name.</param>
 /// <param name="StartingLife">Starting life total.</param>
-public sealed record CreateGameRequest(string Name, int StartingLife = 40);
+/// <param name="Commander">Host commander, if any.</param>
+public sealed record CreateGameRequest(string Name, int StartingLife = 40, CommanderInfo? Commander = null);
 
 /// <summary>Request to join a game.</summary>
 /// <param name="Name">Display name.</param>
-public sealed record JoinGameRequest(string Name);
+/// <param name="Commander">Commander; on a reclaim, <see langword="null"/> keeps the current one.</param>
+public sealed record JoinGameRequest(string Name, CommanderInfo? Commander = null);
 
 /// <summary>A seat handed to a participant; the token is a secret and never part of the game state.</summary>
 /// <param name="Game">Game state.</param>
@@ -59,7 +61,7 @@ public sealed class GameService(IGameNotifier notifier, TimeProvider clock, ILog
 
         var gameId = Guid.NewGuid().ToString("N");
         var playerId = NewId();
-        var state = GameRules.Create(gameId, playerId, r.Name, r.StartingLife, clock.GetUtcNow());
+        var state = GameRules.Create(gameId, playerId, r.Name, r.StartingLife, clock.GetUtcNow(), r.Commander);
         var token = NewToken();
         _seats[gameId] = new Dictionary<string, string> { [token] = playerId };
         _locks[gameId] = new SemaphoreSlim(1, 1);
@@ -80,7 +82,7 @@ public sealed class GameService(IGameNotifier notifier, TimeProvider clock, ILog
         try
         {
             var copy = Clone(GetOrThrow(gameId));
-            var (player, reclaimed) = GameRules.Join(copy, NewId(), r.Name, clock.GetUtcNow());
+            var (player, reclaimed) = GameRules.Join(copy, NewId(), r.Name, clock.GetUtcNow(), r.Commander);
             var token = NewToken();
             var seats = _seats[gameId];
             lock (seats)
@@ -91,8 +93,8 @@ public sealed class GameService(IGameNotifier notifier, TimeProvider clock, ILog
             }
 
             _games[gameId] = copy;
-            // A reclaim does not change the state, so there is nothing to broadcast.
-            if (!reclaimed) await BroadcastAsync(copy, ct);
+            // A plain reclaim does not change the state; a reclaim with a new commander does.
+            if (!reclaimed || r.Commander is not null) await BroadcastAsync(copy, ct);
             return new SeatDto(Clone(copy), player.PlayerId, token, reclaimed);
         }
         finally { gate.Release(); }

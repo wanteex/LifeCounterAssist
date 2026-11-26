@@ -25,7 +25,32 @@ public static class GameRules
     /// <summary>Delay between the last opponent falling and the game ending.</summary>
     public static readonly TimeSpan FinishCountdown = TimeSpan.FromSeconds(10);
 
+    /// <summary>Only Scryfall art crops may be shown on the room screen.</summary>
+    public const string CommanderArtPrefix = "https://cards.scryfall.io/art_crop/";
+
+    private const int MaxCommanderNameLength = 150;
+    private const int MaxCommanderArtistLength = 100;
+    private const int MaxCommanderArtUrlLength = 300;
+
     private static readonly int[] AllowedStartingLife = [20, 25, 30, 40];
+
+    /// <summary>Trims and validates a commander choice.</summary>
+    /// <param name="commander">Raw commander, or <see langword="null"/> for none.</param>
+    /// <returns>The trimmed commander, or <see langword="null"/>.</returns>
+    /// <exception cref="DomainException">Thrown when the name, artist or art URL is invalid.</exception>
+    public static CommanderInfo? NormalizeCommander(CommanderInfo? commander)
+    {
+        if (commander is null) return null;
+        var name = commander.Name?.Trim() ?? "";
+        var artist = commander.Artist?.Trim() ?? "";
+        var url = commander.ArtUrl ?? "";
+        if (name.Length is 0 or > MaxCommanderNameLength
+            || artist.Length > MaxCommanderArtistLength
+            || url.Length > MaxCommanderArtUrlLength
+            || !url.StartsWith(CommanderArtPrefix, StringComparison.Ordinal))
+            throw new DomainException("invalid_commander");
+        return new CommanderInfo(name, url, artist);
+    }
 
     /// <summary>Trims and validates a display name.</summary>
     /// <param name="name">Raw name.</param>
@@ -44,12 +69,14 @@ public static class GameRules
     /// <param name="hostName">Host display name.</param>
     /// <param name="startingLife">Starting life total.</param>
     /// <param name="now">Current time.</param>
+    /// <param name="commander">Host commander, if any.</param>
     /// <returns>The new game.</returns>
     /// <exception cref="DomainException">Thrown when settings are invalid.</exception>
-    public static GameState Create(string id, string hostPlayerId, string hostName, int startingLife, DateTimeOffset now)
+    public static GameState Create(string id, string hostPlayerId, string hostName, int startingLife, DateTimeOffset now, CommanderInfo? commander = null)
     {
         if (!AllowedStartingLife.Contains(startingLife)) throw new DomainException("invalid_starting_life");
         var name = NormalizeName(hostName);
+        var hostCommander = NormalizeCommander(commander);
 
         var state = new GameState
         {
@@ -58,7 +85,7 @@ public static class GameRules
             StartingLife = startingLife,
             CreatedAt = now,
             LastActivityAt = now,
-            Players = [new PlayerState { PlayerId = hostPlayerId, DisplayName = name, Life = startingLife }],
+            Players = [new PlayerState { PlayerId = hostPlayerId, DisplayName = name, Life = startingLife, Commander = hostCommander }],
         };
         AddLog(state, new GameLogEntry(now, hostPlayerId, "created"), now);
         return state;
@@ -69,20 +96,26 @@ public static class GameRules
     /// <param name="newPlayerId">Identifier for a newly created seat.</param>
     /// <param name="name">Display name.</param>
     /// <param name="now">Current time.</param>
+    /// <param name="commander">Commander to set; on a reclaim, <see langword="null"/> keeps the current one.</param>
     /// <returns>The seat and whether it was reclaimed.</returns>
-    /// <exception cref="DomainException">Thrown when the game is over, started, or full.</exception>
-    public static (PlayerState Player, bool Reclaimed) Join(GameState state, string newPlayerId, string name, DateTimeOffset now)
+    /// <exception cref="DomainException">Thrown when the game is over, started, or full, or the commander is invalid.</exception>
+    public static (PlayerState Player, bool Reclaimed) Join(GameState state, string newPlayerId, string name, DateTimeOffset now, CommanderInfo? commander = null)
     {
         var normalized = NormalizeName(name);
+        var chosen = NormalizeCommander(commander);
         if (state.Status is GameStatus.Finished or GameStatus.Cancelled) throw new DomainException("game_over");
 
         var existing = state.FindPlayerByName(normalized);
-        if (existing is not null) return (existing, true);
+        if (existing is not null)
+        {
+            if (chosen is not null) existing.Commander = chosen;
+            return (existing, true);
+        }
 
         if (state.Status != GameStatus.Lobby) throw new DomainException("game_already_started");
         if (state.Players.Count >= MaxPlayers) throw new DomainException("game_full");
 
-        var player = new PlayerState { PlayerId = newPlayerId, DisplayName = normalized, Life = state.StartingLife };
+        var player = new PlayerState { PlayerId = newPlayerId, DisplayName = normalized, Life = state.StartingLife, Commander = chosen };
         state.Players.Add(player);
         AddLog(state, new GameLogEntry(now, newPlayerId, "joined"), now);
         return (player, false);

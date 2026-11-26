@@ -303,4 +303,92 @@ public class GameRulesTests
         GameRules.Cancel(c, "p1", Now.AddSeconds(5));
         Assert.Equal(Now.AddSeconds(5), c.LastActivityAt);
     }
+
+    private const string Art = "https://cards.scryfall.io/art_crop/front/4/a/x.jpg";
+    private static readonly CommanderInfo Atraxa = new("Atraxa", Art, "Marta Nael");
+    private static readonly CommanderInfo Edgar = new("Edgar Markov", Art, "Svetlin Velinov");
+
+    [Fact]
+    public void Create_WithCommander_StoresIt()
+    {
+        var s = GameRules.Create("g", "p1", "Alice", 40, Now, Atraxa);
+        Assert.Equal(Atraxa, s.Players[0].Commander);
+    }
+
+    [Fact]
+    public void Join_WithCommander_StoresIt()
+    {
+        var s = NewGame(1);
+        var (player, _) = GameRules.Join(s, "p2", "Bob", Now, Edgar);
+        Assert.Equal(Edgar, player.Commander);
+    }
+
+    [Fact]
+    public void Join_Reclaim_WithoutCommander_KeepsExisting()
+    {
+        var s = NewGame(1);
+        GameRules.Join(s, "p2", "Bob", Now, Atraxa);
+        var (player, reclaimed) = GameRules.Join(s, "p9", "bob", Now);
+        Assert.True(reclaimed);
+        Assert.Equal(Atraxa, player.Commander);
+    }
+
+    [Fact]
+    public void Join_Reclaim_WithCommander_ReplacesIt()
+    {
+        var s = NewGame(1);
+        GameRules.Join(s, "p2", "Bob", Now, Atraxa);
+        var (player, _) = GameRules.Join(s, "p9", "bob", Now, Edgar);
+        Assert.Equal(Edgar, player.Commander);
+    }
+
+    [Theory]
+    [InlineData("https://evil.example/art_crop/x.jpg")]
+    [InlineData("http://cards.scryfall.io/art_crop/x.jpg")]
+    [InlineData("javascript:alert(1)")]
+    [InlineData("https://cards.scryfall.io/large/front/x.jpg")]
+    public void NormalizeCommander_RejectsBadUrl(string url)
+    {
+        var ex = Assert.Throws<DomainException>(() => GameRules.NormalizeCommander(new CommanderInfo("Atraxa", url, "A")));
+        Assert.Equal("invalid_commander", ex.Code);
+    }
+
+    [Fact]
+    public void NormalizeCommander_RejectsTooLongUrl()
+    {
+        var url = "https://cards.scryfall.io/art_crop/" + new string('a', 300);
+        Assert.Throws<DomainException>(() => GameRules.NormalizeCommander(new CommanderInfo("Atraxa", url, "A")));
+    }
+
+    [Theory]
+    [InlineData("  ")]
+    [InlineData(null)]
+    public void NormalizeCommander_RejectsEmptyName(string? name)
+    {
+        var ex = Assert.Throws<DomainException>(() => GameRules.NormalizeCommander(new CommanderInfo(name!, Art, "A")));
+        Assert.Equal("invalid_commander", ex.Code);
+    }
+
+    [Fact]
+    public void NormalizeCommander_RejectsTooLongNameOrArtist()
+    {
+        Assert.Throws<DomainException>(() => GameRules.NormalizeCommander(new CommanderInfo(new string('a', 151), Art, "A")));
+        Assert.Throws<DomainException>(() => GameRules.NormalizeCommander(new CommanderInfo("Atraxa", Art, new string('a', 101))));
+    }
+
+    [Fact]
+    public void NormalizeCommander_TrimsNameAndArtist_AndAcceptsNull()
+    {
+        Assert.Equal(new CommanderInfo("Atraxa", Art, "Marta"), GameRules.NormalizeCommander(new CommanderInfo(" Atraxa ", Art, " Marta ")));
+        Assert.Equal(new CommanderInfo("Atraxa", Art, ""), GameRules.NormalizeCommander(new CommanderInfo("Atraxa", Art, null!)));
+        Assert.Null(GameRules.NormalizeCommander(null));
+    }
+
+    [Fact]
+    public void Join_WithBadCommander_DoesNotSeatPlayer()
+    {
+        var s = NewGame(1);
+        Assert.Throws<DomainException>(() => GameRules.Join(s, "p2", "Bob", Now, new CommanderInfo("X", "https://evil/x", "")));
+        Assert.Single(s.Players);
+    }
 }

@@ -274,4 +274,51 @@ public class GameServiceTests
 
         await _service.CreateAsync(new CreateGameRequest("Extra"));
     }
+
+    private static readonly CommanderInfo Atraxa = new("Atraxa", "https://cards.scryfall.io/art_crop/front/a.jpg", "Marta Nael");
+    private static readonly CommanderInfo Edgar = new("Edgar Markov", "https://cards.scryfall.io/art_crop/front/e.jpg", "Svetlin Velinov");
+
+    [Fact]
+    public async Task Join_ReclaimWithNewCommander_Broadcasts()
+    {
+        var host = await _service.CreateAsync(new CreateGameRequest("Host"));
+        await _service.JoinAsync(host.Game.Id, new JoinGameRequest("Bob", Atraxa));
+        var before = _notifier.Updated.Count;
+
+        var again = await _service.JoinAsync(host.Game.Id, new JoinGameRequest("bob", Edgar));
+
+        Assert.True(again.Reclaimed);
+        Assert.Equal(before + 1, _notifier.Updated.Count);
+        Assert.Equal(Edgar, _notifier.Updated[^1].FindPlayer(again.PlayerId)!.Commander);
+        Assert.Equal(Edgar, _service.Get(host.Game.Id).FindPlayer(again.PlayerId)!.Commander);
+    }
+
+    [Fact]
+    public async Task Join_ReclaimWithoutCommander_DoesNotBroadcast()
+    {
+        var host = await _service.CreateAsync(new CreateGameRequest("Host"));
+        await _service.JoinAsync(host.Game.Id, new JoinGameRequest("Bob", Atraxa));
+        var before = _notifier.Updated.Count;
+
+        var again = await _service.JoinAsync(host.Game.Id, new JoinGameRequest("bob"));
+
+        Assert.Equal(before, _notifier.Updated.Count);
+        Assert.Equal(Atraxa, again.Game.FindPlayer(again.PlayerId)!.Commander);
+    }
+
+    [Fact]
+    public async Task Create_WithBadCommander_ThrowsAndCreatesNothing()
+    {
+        var ex = await Assert.ThrowsAsync<DomainException>(() =>
+            _service.CreateAsync(new CreateGameRequest("Host", 40, new CommanderInfo("X", "https://evil.example/x.jpg", ""))));
+        Assert.Equal("invalid_commander", ex.Code);
+        Assert.Empty(_service.List());
+    }
+
+    [Fact]
+    public async Task Create_WithCommander_SurvivesCloneToSeat()
+    {
+        var host = await _service.CreateAsync(new CreateGameRequest("Host", 40, Atraxa));
+        Assert.Equal(Atraxa, host.Game.Players[0].Commander);
+    }
 }

@@ -97,6 +97,9 @@ public sealed class PlayerState
     /// <summary>Gets or sets a value indicating whether the player conceded.</summary>
     public bool Conceded { get; set; }
 
+    /// <summary>Gets or sets the commander the player chose, if any.</summary>
+    public CommanderInfo? Commander { get; set; }
+
     /// <summary>Gets a value indicating whether the player has lost according to the rules.</summary>
     public bool IsEliminated =>
         Conceded
@@ -104,6 +107,12 @@ public sealed class PlayerState
         || Poison >= GameRules.LethalPoison
         || CommanderDamage.Values.Any(d => d >= GameRules.LethalCommanderDamage);
 }
+
+/// <summary>Commander card chosen by a player, from Scryfall.</summary>
+/// <param name="Name">Card name.</param>
+/// <param name="ArtUrl">Scryfall <c>art_crop</c> image URL.</param>
+/// <param name="Artist">Illustrator, credited next to the art.</param>
+public sealed record CommanderInfo(string Name, string ArtUrl, string Artist);
 
 /// <summary>A single entry of the game action log.</summary>
 /// <param name="At">When the action happened.</param>

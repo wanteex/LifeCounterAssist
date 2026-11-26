@@ -34,7 +34,7 @@
 
 ---
 
-### Tâche 1 : Moteur de règles réduit + compte à rebours + reprise de place
+### Task 1: Moteur de règles réduit + compte à rebours + reprise de place
 
 **Fichiers :**
 - Modifier : `backend/src/LifeCounterAssist.Api/Domain/GameState.cs`
@@ -141,7 +141,7 @@ void EveryMutation_UpdatesLastActivityAt()
 
 ---
 
-### Tâche 2 : `GameService` en mémoire, jetons de siège, partie affichée, nettoyage
+### Task 2: `GameService` en mémoire, jetons de siège, partie affichée, nettoyage
 
 **Fichiers :**
 - Créer : `backend/src/LifeCounterAssist.Api/Services/IGameNotifier.cs`
@@ -213,7 +213,7 @@ void List_ExcludesFinishedAndCancelled()
 
 ---
 
-### Tâche 3 : Hub, REST, ticker, service des fichiers statiques
+### Task 3: Hub, REST, ticker, service des fichiers statiques
 
 **Fichiers :**
 - Réécrire : `backend/src/LifeCounterAssist.Api/Hubs/GameHub.cs`, `Hubs/Notifier.cs` (implémente `IGameNotifier`)
@@ -259,7 +259,7 @@ void List_ExcludesFinishedAndCancelled()
 
 ---
 
-### Tâche 4 : Front — socle sans compte, accueil, création, rejoindre
+### Task 4: Front — socle sans compte, accueil, création, rejoindre
 
 **Fichiers :**
 - Supprimer : `src/auth/`, `src/session.ts`, `src/pages/LoginPage.tsx`, `DecksPage.tsx`, `FriendsPage.tsx`, `ProfilePage.tsx`, `src/components/DeckSelect.tsx`, `public/config.js`, la balise `<script src="/config.js">` d'`index.html`, et la dépendance `@azure/msal-browser`
@@ -305,7 +305,7 @@ Routes : `/` (accueil), `/nouvelle` (création), `/parties/:id` (tâche 5), `/ec
 
 ---
 
-### Tâche 5 : Front — page partie (lobby, plateau téléphone, compte à rebours, fin)
+### Task 5: Front — page partie (lobby, plateau téléphone, compte à rebours, fin)
 
 **Fichiers :**
 - Réécrire : `src/pages/GamePage.tsx`, `src/hooks/useGame.ts` (événement `GameUpdated`), `src/components/PlayerDetails.tsx`
@@ -339,7 +339,7 @@ Comportement :
 
 ---
 
-### Tâche 6 : Front — page écran `/ecran`
+### Task 6: Front — page écran `/ecran`
 
 **Fichiers :**
 - Créer : `src/pages/ScreenPage.tsx`, `src/components/ScreenBoard.tsx`
@@ -366,7 +366,7 @@ Comportement :
 
 ---
 
-### Tâche 7 : Empaquetage unique, infra simplifiée, README
+### Task 7: Empaquetage unique, infra simplifiée, README
 
 **Fichiers :**
 - Créer : `Dockerfile` à la racine. Étapes :
@@ -395,7 +395,7 @@ Comportement :
 
 ---
 
-### Tâche 8 : Recette de bout en bout
+### Task 8: Recette de bout en bout
 
 - [ ] **Étape 1 :** `cd backend; dotnet test` → PASS ; `cd frontend; npm run build` → OK.
 - [ ] **Étape 2 :** sur l'app servie par un seul processus (tâche 7, étape 3), trois navigateurs : `/ecran`, Alice, Bob. Dérouler le parcours complet de la spec :

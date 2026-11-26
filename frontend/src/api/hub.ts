@@ -4,9 +4,26 @@ import type { GameState, GameSummary } from './types'
 
 type Listener = () => void
 
+const RETRY_MS = 3000
+
 let connection: HubConnection | null = null
 let starting: Promise<HubConnection> | null = null
+let everConnected = false
+let retryTimer: number | undefined
 const reconnectListeners = new Set<Listener>()
+
+const notifyReconnected = () => reconnectListeners.forEach((l) => l())
+
+// After a full disconnect (SignalR gave up, or the server restarted) keep trying to restart
+// the connection while someone cares, so groups get re-joined without waiting for a user tap.
+function scheduleRetry() {
+  if (retryTimer !== undefined) return
+  retryTimer = window.setTimeout(() => {
+    retryTimer = undefined
+    if (reconnectListeners.size === 0) return
+    getHub().catch(scheduleRetry)
+  }, RETRY_MS)
+}
 
 /** Returns the shared, started hub connection (one per tab). */
 export function getHub(): Promise<HubConnection> {
@@ -19,12 +36,22 @@ export function getHub(): Promise<HubConnection> {
       .withAutomaticReconnect([0, 1000, 2000, 5000, 10000, 10000, 30000])
       .configureLogging(LogLevel.Warning)
       .build()
-    connection.onreconnected(() => reconnectListeners.forEach((l) => l()))
+    connection.onreconnected(notifyReconnected)
+    connection.onclose(scheduleRetry)
   }
 
   const hub = connection
   starting = (hub.state === HubConnectionState.Disconnected ? hub.start() : Promise.resolve())
-    .then(() => hub)
+    .then(() => {
+      // A restart after a previous successful connection lost the server-side group memberships.
+      if (everConnected) notifyReconnected()
+      everConnected = true
+      return hub
+    })
+    .catch((e) => {
+      if (everConnected) scheduleRetry()
+      throw e
+    })
     .finally(() => {
       starting = null
     })
@@ -48,7 +75,7 @@ export function onHubEvent(event: string, handler: (...args: any[]) => void): ()
   }
 }
 
-/** Registers a callback fired after an automatic reconnection (groups must be re-joined). */
+/** Registers a callback fired after the connection came back (groups must be re-joined). */
 export function onReconnected(listener: Listener): () => void {
   reconnectListeners.add(listener)
   return () => reconnectListeners.delete(listener)

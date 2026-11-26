@@ -51,6 +51,8 @@ export interface SeatDto {
   game: GameState
   playerId: string
   seatToken: string
+  /** True when an existing seat of the same name was taken back. */
+  reclaimed: boolean
 }
 
 export const MAX_PLAYERS = 8

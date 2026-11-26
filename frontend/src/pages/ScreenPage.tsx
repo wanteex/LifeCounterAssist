@@ -1,6 +1,6 @@
 import { QRCodeSVG } from 'qrcode.react'
 import { useTranslation } from 'react-i18next'
-import type { GameState, GameSummary } from '../api/types'
+import type { GameState } from '../api/types'
 import { ScreenBoard } from '../components/ScreenBoard'
 import { useScreenFeed } from '../hooks/useScreenFeed'
 
@@ -15,7 +15,7 @@ function Qr({ className }: { className: string }) {
 /** Unattended room display: QR code at rest, lobby, live board, winner. */
 export function ScreenPage() {
   const { t } = useTranslation()
-  const { game, lobbies, connected } = useScreenFeed()
+  const { game, connected } = useScreenFeed()
 
   return (
     <main className="h-dvh overflow-hidden bg-slate-950 text-slate-100">
@@ -25,7 +25,7 @@ export function ScreenPage() {
         </p>
       )}
       {game === null || game.status === 'Cancelled' ? (
-        <Idle lobbies={lobbies} />
+        <Idle />
       ) : game.status === 'Lobby' ? (
         <Lobby game={game} />
       ) : game.status === 'InProgress' ? (
@@ -37,21 +37,12 @@ export function ScreenPage() {
   )
 }
 
-function Idle({ lobbies }: { lobbies: GameSummary[] }) {
+function Idle() {
   const { t } = useTranslation()
   return (
     <div className="flex h-full flex-col items-center justify-center gap-6 p-6">
       <Qr className="h-[60vh]" />
       <p className="text-[clamp(2rem,6vh,4rem)] font-black text-amber-400">{t('screen.scan')}</p>
-      {lobbies.length > 0 && (
-        <ul className="flex flex-wrap justify-center gap-3 text-[clamp(1rem,3vh,2rem)] text-slate-300">
-          {lobbies.map((g) => (
-            <li key={g.id} className="rounded-xl bg-slate-900 px-4 py-2">
-              {t('screen.lobbyOf', { name: g.hostName, life: g.startingLife })} · {g.playerCount}
-            </li>
-          ))}
-        </ul>
-      )}
     </div>
   )
 }

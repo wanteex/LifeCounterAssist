@@ -1,16 +1,15 @@
 import { useEffect, useState } from 'react'
 import { gameHub, getHub, onReconnected } from '../api/hub'
-import type { GameState, GameSummary } from '../api/types'
+import type { GameState } from '../api/types'
 
 const RETRY_MS = 3000
 
 /**
- * Feed for the unattended room screen: the game to show (or null) and the open lobbies.
+ * Feed for the unattended room screen: the game to show (or null).
  * Keeps retrying until connected (also at page load) and re-subscribes after every reconnection.
  */
 export function useScreenFeed() {
   const [game, setGame] = useState<GameState | null>(null)
-  const [lobbies, setLobbies] = useState<GameSummary[]>([])
   const [connected, setConnected] = useState(false)
 
   useEffect(() => {
@@ -19,13 +18,11 @@ export function useScreenFeed() {
     let bound = false
     let hubRef: Awaited<ReturnType<typeof getHub>> | null = null
     const onScreen = (state: GameState | null) => active && setGame(state)
-    const onList = (list: GameSummary[]) => active && setLobbies(list)
 
     const sync = async () => {
-      const [state, list] = await Promise.all([gameHub.watchScreen(), gameHub.watchList()])
+      const state = await gameHub.watchScreen()
       if (!active) return
       setGame(state)
-      setLobbies(list)
       setConnected(true)
     }
 
@@ -47,9 +44,7 @@ export function useScreenFeed() {
           hub.onclose(lost)
         }
         hub.off('ScreenChanged', onScreen)
-        hub.off('ListChanged', onList)
         hub.on('ScreenChanged', onScreen)
-        hub.on('ListChanged', onList)
         await sync()
       } catch {
         lost()
@@ -64,9 +59,8 @@ export function useScreenFeed() {
       window.clearTimeout(retry)
       offReconnect()
       hubRef?.off('ScreenChanged', onScreen)
-      hubRef?.off('ListChanged', onList)
     }
   }, [])
 
-  return { game, lobbies, connected }
+  return { game, connected }
 }

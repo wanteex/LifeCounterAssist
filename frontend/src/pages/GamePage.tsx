@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Link, useNavigate, useParams } from 'react-router-dom'
+import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
 import { errorCode } from '../api/client'
 import { gameHub } from '../api/hub'
 import { GameBoard } from '../components/GameBoard'
@@ -11,18 +11,34 @@ import { PlayerTile } from '../components/PlayerTile'
 import { Button, Card, ErrorBanner, Spinner } from '../components/ui'
 import { useGame } from '../hooks/useGame'
 import { usePendingDeltas, useRecentLifeChanges } from '../hooks/useOptimistic'
+import type { SeatDto } from '../api/types'
 import { clearSeat, getSeat, type Seat } from '../seats'
 
 export function GamePage() {
   const { t } = useTranslation()
   const navigate = useNavigate()
   const { id = '' } = useParams()
+  const location = useLocation()
   const { game, error: watchError, connected } = useGame(id)
   const [seat, setSeat] = useState<Seat | null>(() => getSeat(id))
   const [sheetOpen, setSheetOpen] = useState(false)
   const [actionError, setActionError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const autoPrompted = useRef(false)
+  const [notice, setNotice] = useState<string | null>(
+    () => (location.state as { reclaimedName?: string } | null)?.reclaimedName ?? null,
+  )
+  const notFound = watchError === 'game_not_found'
+
+  // Drop the one-shot navigation state so a reload does not show the notice again.
+  useEffect(() => {
+    if (location.state) navigate(location.pathname, { replace: true, state: null })
+  }, [location.state, location.pathname, navigate])
+
+  // The server no longer knows this game: forget the seat.
+  useEffect(() => {
+    if (notFound) clearSeat(id)
+  }, [notFound, id])
 
   // Seat lost (reclaimed from another device): forget it and ask for the name again.
   const onError = useCallback(
@@ -96,7 +112,13 @@ export function GamePage() {
     })
 
   let content
-  if (!game) {
+  if (notFound) {
+    content = (
+      <Card>
+        <p className="text-lg text-slate-100">{t('errors.game_not_found')}</p>
+      </Card>
+    )
+  } else if (!game) {
     content = watchError ? null : <Spinner />
   } else if (game.status === 'Cancelled') {
     content = (
@@ -159,7 +181,15 @@ export function GamePage() {
   return (
     <main className="mx-auto flex min-h-dvh max-w-lg flex-col gap-4 p-4">
       {!connected && <p className="rounded-xl bg-amber-900/60 px-3 py-2 text-sm text-amber-100">{t('game.reconnecting')}</p>}
-      <ErrorBanner code={watchError} />
+      {notice && (
+        <p className="flex items-center justify-between gap-2 rounded-xl bg-emerald-900/60 px-3 py-2 text-sm text-emerald-100">
+          <span>{t('game.reclaimed', { name: notice })}</span>
+          <button type="button" onClick={() => setNotice(null)} aria-label={t('common.cancel')}>
+            ✕
+          </button>
+        </p>
+      )}
+      <ErrorBanner code={notFound ? null : watchError} />
       <ErrorBanner code={actionError} onClose={() => setActionError(null)} />
       {content}
       <Link to="/" className="self-start text-amber-400">
@@ -170,8 +200,9 @@ export function GamePage() {
         open={sheetOpen}
         reclaim={game?.status === 'InProgress'}
         onClose={() => setSheetOpen(false)}
-        onSeated={() => {
+        onSeated={(s: SeatDto) => {
           setSeat(getSeat(id))
+          if (s.reclaimed) setNotice(s.game.players.find((p) => p.playerId === s.playerId)?.displayName ?? null)
           setSheetOpen(false)
         }}
       />

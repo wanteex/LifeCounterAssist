@@ -68,8 +68,9 @@ export function HomePage() {
     if (!target || !validName) return
     const id = target.id
     void run(async () => {
-      await api.joinGame(id, trimmed)
-      navigate(`/parties/${id}`)
+      const seat = await api.joinGame(id, trimmed)
+      const reclaimedName = seat.reclaimed ? seat.game.players.find((p) => p.playerId === seat.playerId)?.displayName : undefined
+      navigate(`/parties/${id}`, { state: reclaimedName ? { reclaimedName } : undefined })
     })
   }
 

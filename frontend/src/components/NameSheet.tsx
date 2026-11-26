@@ -1,13 +1,13 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 import { api } from '../api/client'
-import { MAX_NAME_LENGTH } from '../api/types'
+import { MAX_NAME_LENGTH, type SeatDto } from '../api/types'
 import { getLastName } from '../seats'
 import { Sheet } from './Sheet'
 import { Button, ErrorBanner, Input, useAction } from './ui'
 
 /** Name entry used to join a lobby or reclaim a seat; saves the seat on success. */
-export function NameSheet({ gameId, open, reclaim, onClose, onSeated }: { gameId: string; open: boolean; reclaim: boolean; onClose: () => void; onSeated: () => void }) {
+export function NameSheet({ gameId, open, reclaim, onClose, onSeated }: { gameId: string; open: boolean; reclaim: boolean; onClose: () => void; onSeated: (seat: SeatDto) => void }) {
   const { t } = useTranslation()
   const [name, setName] = useState('')
   const { busy, error, setError, run } = useAction()
@@ -26,8 +26,7 @@ export function NameSheet({ gameId, open, reclaim, onClose, onSeated }: { gameId
     e.preventDefault()
     if (!valid) return
     void run(async () => {
-      await api.joinGame(gameId, trimmed)
-      onSeated()
+      onSeated(await api.joinGame(gameId, trimmed))
     })
   }
 

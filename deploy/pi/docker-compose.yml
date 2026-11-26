@@ -1,0 +1,11 @@
+# Raspberry Pi stack, copied to ~/lifecounterassist by the "Deploy to Raspberry Pi" workflow.
+# IMAGE comes from the .env file the workflow writes next to this file.
+# The app only listens on the Pi itself: Tailscale Funnel publishes it.
+services:
+  app:
+    image: ${IMAGE:-ghcr.io/wanteex/lifecounterassist:latest}
+    restart: unless-stopped
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+    ports:
+      - "127.0.0.1:8080:8080"

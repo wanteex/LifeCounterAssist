@@ -88,6 +88,61 @@ az deployment group create --resource-group $rg --template-file infra/bicep/main
 
 La sortie `appUrl` donne l'URL publique : c'est elle qu'encode le QR code (ouvre `<appUrl>/ecran` sur le PC de la salle). Pour une mise à jour, reconstruis l'image avec un nouveau tag puis relance l'étape 3.
 
+## Déploiement sur Raspberry Pi
+
+Le workflow **Deploy to Raspberry Pi** (`.github/workflows/deploy-pi.yml`) construit l'image ARM64 sur GitHub, la publie sur `ghcr.io/wanteex/lifecounterassist`, puis la déploie sur la Pi à travers Tailscale. Il se lance uniquement à la main (onglet Actions, bouton **Run workflow**) : un déploiement redémarre l'app et coupe les parties en cours, gardées en mémoire.
+
+```text
+Run workflow ─► runner ARM GitHub : build + push ghcr.io
+             └► runner Ubuntu : rejoint le tailnet (tag:ci) ─ssh─► Pi : docker compose pull && up -d
+```
+
+### Mise en place (une seule fois)
+
+Sur la Pi (Raspberry Pi OS 64 bits, Docker installé, SSH actif) :
+
+```bash
+# Utilisateur de déploiement dans le groupe docker
+sudo adduser --disabled-password --gecos "" deploy
+sudo usermod -aG docker deploy
+
+# Clé SSH dédiée au workflow (la partie privée ira dans GitHub)
+ssh-keygen -t ed25519 -N "" -C "github-deploy" -f ./deploy_key
+sudo install -d -m 700 -o deploy -g deploy /home/deploy/.ssh
+cat ./deploy_key.pub | sudo tee -a /home/deploy/.ssh/authorized_keys
+sudo chown deploy:deploy /home/deploy/.ssh/authorized_keys && sudo chmod 600 /home/deploy/.ssh/authorized_keys
+
+# URL publique HTTPS vers l'app (écoute sur 127.0.0.1:8080)
+sudo tailscale funnel --bg 8080
+```
+
+Dans la console Tailscale :
+
+1. Politique d'accès : déclarer le tag et autoriser SSH vers la Pi.
+
+   ```json
+   "tagOwners": { "tag:ci": ["autogroup:admin"] },
+   "grants": [{ "src": ["tag:ci"], "dst": ["<nom-de-la-pi>"], "ip": ["22"] }]
+   ```
+
+2. Settings > OAuth clients : créer un client avec l'écriture sur **Auth Keys** et le tag `tag:ci`.
+
+Dans GitHub, Settings > Secrets and variables > Actions, créer :
+
+| Secret                | Valeur                                                    |
+|-----------------------|-----------------------------------------------------------|
+| `TS_OAUTH_CLIENT_ID`  | ID du client OAuth Tailscale                              |
+| `TS_OAUTH_SECRET`     | Secret du client OAuth Tailscale                          |
+| `PI_HOST`             | Nom MagicDNS de la Pi sur le tailnet (ex. `raspberrypi`) |
+| `PI_USER`             | `deploy`                                                  |
+| `PI_SSH_KEY`          | Contenu du fichier `deploy_key` (clé privée)             |
+
+Puis supprimer `deploy_key` et `deploy_key.pub` de la Pi.
+
+Après le premier lancement du workflow, rendre l'image publique pour que la Pi la télécharge sans identifiants : profil GitHub > Packages > `lifecounterassist` > Package settings > Change visibility > Public.
+
+L'écran de salle est sur `https://<nom-de-la-pi>.<tailnet>.ts.net/ecran` : le QR code reprend l'adresse de la page, il pointe donc sur l'URL publique.
+
 ## Limites connues
 
 * L'état des parties est en mémoire : un redémarrage du serveur les perd.

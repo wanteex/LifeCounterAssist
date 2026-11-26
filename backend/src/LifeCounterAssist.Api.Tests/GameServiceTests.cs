@@ -321,4 +321,16 @@ public class GameServiceTests
         var host = await _service.CreateAsync(new CreateGameRequest("Host", 40, Atraxa));
         Assert.Equal(Atraxa, host.Game.Players[0].Commander);
     }
+
+    [Fact]
+    public async Task Join_ReclaimWithSameCommander_DoesNotBroadcast()
+    {
+        var host = await _service.CreateAsync(new CreateGameRequest("Host"));
+        await _service.JoinAsync(host.Game.Id, new JoinGameRequest("Bob", Atraxa));
+        var before = _notifier.Updated.Count;
+
+        await _service.JoinAsync(host.Game.Id, new JoinGameRequest("bob", Atraxa with { }));
+
+        Assert.Equal(before, _notifier.Updated.Count);
+    }
 }

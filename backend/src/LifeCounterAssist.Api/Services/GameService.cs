@@ -81,8 +81,10 @@ public sealed class GameService(IGameNotifier notifier, TimeProvider clock, ILog
         await gate.WaitAsync(ct);
         try
         {
-            var copy = Clone(GetOrThrow(gameId));
+            var current = GetOrThrow(gameId);
+            var copy = Clone(current);
             var (player, reclaimed) = GameRules.Join(copy, NewId(), r.Name, clock.GetUtcNow(), r.Commander);
+            var commanderChanged = current.FindPlayer(player.PlayerId)?.Commander != player.Commander;
             var token = NewToken();
             var seats = _seats[gameId];
             lock (seats)
@@ -93,8 +95,8 @@ public sealed class GameService(IGameNotifier notifier, TimeProvider clock, ILog
             }
 
             _games[gameId] = copy;
-            // A plain reclaim does not change the state; a reclaim with a new commander does.
-            if (!reclaimed || r.Commander is not null) await BroadcastAsync(copy, ct);
+            // A plain reclaim does not change the state; a reclaim with a different commander does.
+            if (!reclaimed || commanderChanged) await BroadcastAsync(copy, ct);
             return new SeatDto(Clone(copy), player.PlayerId, token, reclaimed);
         }
         finally { gate.Release(); }

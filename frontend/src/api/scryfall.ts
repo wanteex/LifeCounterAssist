@@ -16,7 +16,7 @@ interface ScryfallCard {
 
 /** Searches cards that can be commanders, most played first. Empty list when nothing matches. */
 export async function searchCommanders(text: string, signal: AbortSignal): Promise<Commander[]> {
-  const q = encodeURIComponent(`${text} is:commander`)
+  const q = encodeURIComponent(`(${text}) is:commander`)
   const response = await fetch(`${SEARCH_URL}?q=${q}&order=edhrec`, { signal, headers: { Accept: 'application/json' } })
   // Scryfall answers 404 when a search has no results.
   if (response.status === 404) return []

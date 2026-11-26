@@ -21,14 +21,14 @@ export function PlayerTile({
   const body = (
     <>
       <CommanderBackdrop commander={player.commander} credit="text-[0.55rem] leading-none" />
-      <span className="relative min-w-0 flex-1 truncate text-left font-semibold">
+      <span className="relative min-w-0 flex-1 truncate text-left font-semibold drop-shadow">
         {player.displayName}
         {isHost && <span className="ml-2 text-xs font-normal text-amber-400">{t('game.host')}</span>}
         {out && <span className="ml-2 text-xs font-normal text-rose-400">{player.conceded ? t('game.conceded') : t('game.eliminated')}</span>}
       </span>
       {player.poison > 0 && <span className="relative text-sm text-emerald-400">☠ {player.poison}</span>}
       {recent ? <span className={`relative text-sm ${recent > 0 ? 'text-emerald-400' : 'text-rose-400'}`}>{recent > 0 ? `+${recent}` : recent}</span> : null}
-      <span className="relative w-14 text-right text-2xl font-black tabular-nums">{life}</span>
+      <span className="relative w-14 text-right text-2xl font-black tabular-nums drop-shadow">{life}</span>
     </>
   )
   const cls = `relative flex w-full overflow-hidden items-center gap-3 rounded-xl bg-slate-800/70 px-4 py-3 text-slate-100 ${out ? 'opacity-50' : ''}`

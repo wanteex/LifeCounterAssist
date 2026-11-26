@@ -231,4 +231,47 @@ public class GameServiceTests
 
         Assert.Equal(lobby.Game.Id, Assert.Single(_service.List()).Id);
     }
+
+    [Fact]
+    public async Task Act_AfterLeave_OldTokenIsRejected()
+    {
+        var host = await _service.CreateAsync(new CreateGameRequest("Host"));
+        var guest = await _service.JoinAsync(host.Game.Id, new JoinGameRequest("Guest"));
+        await _service.ActAsync(host.Game.Id, guest.SeatToken, (s, p) => GameRules.Leave(s, p, _clock.GetUtcNow()));
+
+        var ex = await Assert.ThrowsAsync<ForbiddenException>(() =>
+            _service.ActAsync(host.Game.Id, guest.SeatToken, (_, _) => { }));
+        Assert.Equal("invalid_seat", ex.Code);
+    }
+
+    [Fact]
+    public async Task Join_Reclaim_FlagsSeatAsReclaimed()
+    {
+        var host = await _service.CreateAsync(new CreateGameRequest("Host"));
+        var first = await _service.JoinAsync(host.Game.Id, new JoinGameRequest("Bob"));
+        var again = await _service.JoinAsync(host.Game.Id, new JoinGameRequest("bob"));
+
+        Assert.False(host.Reclaimed);
+        Assert.False(first.Reclaimed);
+        Assert.True(again.Reclaimed);
+    }
+
+    [Fact]
+    public async Task Create_WithTooManyActiveGames_ThrowsTooManyGames()
+    {
+        for (var i = 0; i < 20; i++) await _service.CreateAsync(new CreateGameRequest($"H{i}"));
+
+        var ex = await Assert.ThrowsAsync<DomainException>(() => _service.CreateAsync(new CreateGameRequest("Extra")));
+        Assert.Equal("too_many_games", ex.Code);
+    }
+
+    [Fact]
+    public async Task Create_FinishedAndCancelledGamesDoNotCountTowardCap()
+    {
+        var first = await _service.CreateAsync(new CreateGameRequest("H0"));
+        await _service.ActAsync(first.Game.Id, first.SeatToken, (s, p) => GameRules.Cancel(s, p, _clock.GetUtcNow()));
+        for (var i = 1; i < 20; i++) await _service.CreateAsync(new CreateGameRequest($"H{i}"));
+
+        await _service.CreateAsync(new CreateGameRequest("Extra"));
+    }
 }

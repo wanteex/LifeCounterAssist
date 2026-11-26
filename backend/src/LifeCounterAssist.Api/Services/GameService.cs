@@ -19,7 +19,8 @@ public sealed record JoinGameRequest(string Name);
 /// <param name="Game">Game state.</param>
 /// <param name="PlayerId">Seat owner.</param>
 /// <param name="SeatToken">Secret proving ownership of the seat.</param>
-public sealed record SeatDto(GameState Game, string PlayerId, string SeatToken);
+/// <param name="Reclaimed">Whether an existing seat was taken back rather than a new one created.</param>
+public sealed record SeatDto(GameState Game, string PlayerId, string SeatToken, bool Reclaimed = false);
 
 /// <summary>Lightweight game description for the lobby list.</summary>
 /// <param name="Id">Game identifier.</param>
@@ -37,6 +38,7 @@ public sealed class GameService(IGameNotifier notifier, TimeProvider clock, ILog
     private static readonly TimeSpan FinishedDisplay = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan FinishedRetention = TimeSpan.FromMinutes(10);
     private static readonly TimeSpan IdleRetention = TimeSpan.FromHours(6);
+    private const int MaxActiveGames = 20;
 
     private readonly ConcurrentDictionary<string, GameState> _games = new();
     private readonly ConcurrentDictionary<string, Dictionary<string, string>> _seats = new();
@@ -49,8 +51,12 @@ public sealed class GameService(IGameNotifier notifier, TimeProvider clock, ILog
     /// <param name="r">Creation request.</param>
     /// <param name="ct">Cancellation token.</param>
     /// <returns>The host seat.</returns>
+    /// <exception cref="DomainException">Thrown when too many games are active.</exception>
     public async Task<SeatDto> CreateAsync(CreateGameRequest r, CancellationToken ct = default)
     {
+        if (_games.Values.Count(g => g.Status is GameStatus.Lobby or GameStatus.InProgress) >= MaxActiveGames)
+            throw new DomainException("too_many_games");
+
         var gameId = Guid.NewGuid().ToString("N");
         var playerId = NewId();
         var state = GameRules.Create(gameId, playerId, r.Name, r.StartingLife, clock.GetUtcNow());
@@ -87,7 +93,7 @@ public sealed class GameService(IGameNotifier notifier, TimeProvider clock, ILog
             _games[gameId] = copy;
             // A reclaim does not change the state, so there is nothing to broadcast.
             if (!reclaimed) await BroadcastAsync(copy, ct);
-            return new SeatDto(Clone(copy), player.PlayerId, token);
+            return new SeatDto(Clone(copy), player.PlayerId, token, reclaimed);
         }
         finally { gate.Release(); }
     }
@@ -151,10 +157,20 @@ public sealed class GameService(IGameNotifier notifier, TimeProvider clock, ILog
                 if (seatToken is not null) seats.TryGetValue(seatToken, out playerId);
             }
 
-            if (playerId is null) throw new ForbiddenException("invalid_seat");
+            // A seat whose player left the game is no longer valid.
+            if (playerId is null || current.FindPlayer(playerId) is null) throw new ForbiddenException("invalid_seat");
 
             var copy = Clone(current);
             action(copy, playerId);
+            if (copy.FindPlayer(playerId) is null)
+            {
+                lock (seats)
+                {
+                    foreach (var old in seats.Where(kv => kv.Value == playerId).Select(kv => kv.Key).ToList())
+                        seats.Remove(old);
+                }
+            }
+
             _games[gameId] = copy;
             await BroadcastAsync(copy, ct);
             return Clone(copy);

@@ -63,6 +63,14 @@ const en = {
     reconnecting: 'Reconnecting…',
     home: 'Home',
   },
+  commander: {
+    label: 'Your commander (optional)',
+    search: 'Search a commander…',
+    change: 'Change',
+    noResults: 'No commander found',
+    unavailable: 'Search unavailable, you can play without one',
+    artist: 'Art {{artist}}',
+  },
   screen: { scan: 'Scan to play', lobbyOf: "{{name}}'s game · {{life}} life", finished: 'Game over' },
   errors: {
     invalid_name: 'Invalid name (1 to 20 characters).',
@@ -77,6 +85,7 @@ const en = {
     player_not_found: 'Player not found.',
     invalid_commander_source: 'Invalid commander damage source.',
     game_not_found: 'Game not found. It may have ended or the server restarted.',
+    invalid_commander: 'Invalid commander.',
     too_many_games: 'Too many games are in progress. Try again later.',
     host_cannot_leave: 'The host cannot leave the lobby.',
     invalid_starting_life: 'Invalid starting life.',

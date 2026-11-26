@@ -1,6 +1,7 @@
 import { useTranslation } from 'react-i18next'
 import type { GameState, PlayerState } from '../api/types'
 import { useRecentLifeChanges } from '../hooks/useOptimistic'
+import { CommanderBackdrop } from './CommanderBackdrop'
 import { FinishCountdown } from './FinishCountdown'
 
 /** Number of grid columns for a given player count (2→2, 3-4→2, 5-6→3, 7-8→4). */
@@ -40,14 +41,15 @@ function Tile({ player, recent, names }: { player: PlayerState; recent?: number;
         out ? 'bg-slate-900/50 text-slate-500 opacity-50 ring-slate-800' : 'bg-slate-800 text-slate-100 ring-slate-700'
       }`}
     >
-      <p className="max-w-full truncate text-[clamp(1.25rem,4vh,3rem)] font-bold">{player.displayName}</p>
-      <p className="font-black leading-none tabular-nums text-[clamp(4rem,15vh,12rem)]">{player.life}</p>
+      <CommanderBackdrop commander={player.commander} credit="text-[clamp(0.7rem,1.6vh,1rem)]" />
+      <p className="relative max-w-full truncate text-[clamp(1.25rem,4vh,3rem)] font-bold drop-shadow">{player.displayName}</p>
+      <p className="relative font-black leading-none tabular-nums text-[clamp(4rem,15vh,12rem)] drop-shadow-lg">{player.life}</p>
       {recent ? (
         <span className={`absolute right-4 top-3 text-[clamp(1.5rem,5vh,4rem)] font-black ${recent > 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
           {recent > 0 ? `+${recent}` : recent}
         </span>
       ) : null}
-      <div className="flex flex-wrap justify-center gap-x-4 text-[clamp(1rem,3vh,2rem)] font-semibold">
+      <div className="relative flex flex-wrap justify-center gap-x-4 text-[clamp(1rem,3vh,2rem)] font-semibold">
         {player.poison > 0 && <span className="text-emerald-400">☠ {player.poison}</span>}
         {damage.map(([source, value]) => (
           <span key={source} className="text-amber-300">
@@ -55,7 +57,7 @@ function Tile({ player, recent, names }: { player: PlayerState; recent?: number;
           </span>
         ))}
       </div>
-      {out && <p className="text-[clamp(1rem,3vh,2rem)] text-rose-400">{player.conceded ? t('game.conceded') : t('game.eliminated')}</p>}
+      {out && <p className="relative text-[clamp(1rem,3vh,2rem)] text-rose-400">{player.conceded ? t('game.conceded') : t('game.eliminated')}</p>}
     </div>
   )
 }

@@ -64,6 +64,14 @@ const fr: Translation = {
     reconnecting: 'Reconnexion…',
     home: 'Accueil',
   },
+  commander: {
+    label: 'Ton commandant (facultatif)',
+    search: 'Chercher un commandant…',
+    change: 'Changer',
+    noResults: 'Aucun commandant trouvé',
+    unavailable: 'Recherche indisponible, tu peux jouer sans',
+    artist: 'Illus. {{artist}}',
+  },
   screen: { scan: 'Scanne pour jouer', lobbyOf: 'Partie de {{name}} · {{life}} PV', finished: 'Partie terminée' },
   errors: {
     invalid_name: 'Pseudo invalide (1 à 20 caractères).',
@@ -78,6 +86,7 @@ const fr: Translation = {
     player_not_found: 'Joueur introuvable.',
     invalid_commander_source: 'Source de dégâts de commandant invalide.',
     game_not_found: 'Partie introuvable. Elle est peut-être terminée, ou le serveur a redémarré.',
+    invalid_commander: 'Commandant invalide.',
     too_many_games: 'Trop de parties en cours. Réessaie plus tard.',
     host_cannot_leave: "L'hôte ne peut pas quitter le salon.",
     invalid_starting_life: 'Points de vie de départ invalides.',

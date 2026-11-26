@@ -3,10 +3,11 @@ import { useTranslation } from 'react-i18next'
 import { Link, useNavigate } from 'react-router-dom'
 import { api, errorCode } from '../api/client'
 import { gameHub, getHub, onReconnected } from '../api/hub'
-import { MAX_NAME_LENGTH, MAX_PLAYERS, type GameSummary } from '../api/types'
+import { MAX_NAME_LENGTH, MAX_PLAYERS, type Commander, type GameSummary } from '../api/types'
+import { CommanderPicker } from '../components/CommanderPicker'
 import { Sheet } from '../components/Sheet'
 import { Button, Card, ErrorBanner, Input, Spinner, useAction } from '../components/ui'
-import { getLastName, getSeat } from '../seats'
+import { getLastCommander, getLastName, getSeat } from '../seats'
 
 /** Live list of games, kept in sync through the hub. */
 function useGameList() {
@@ -52,11 +53,13 @@ export function HomePage() {
   const { games, error: listError } = useGameList()
   const [target, setTarget] = useState<GameSummary | null>(null)
   const [name, setName] = useState('')
+  const [commander, setCommander] = useState<Commander | null>(null)
   const { busy, error, setError, run } = useAction()
 
   const openJoin = (game: GameSummary) => {
     setError(null)
     setName(getLastName())
+    setCommander(getLastCommander())
     setTarget(game)
   }
 
@@ -68,7 +71,7 @@ export function HomePage() {
     if (!target || !validName) return
     const id = target.id
     void run(async () => {
-      const seat = await api.joinGame(id, trimmed)
+      const seat = await api.joinGame(id, trimmed, commander)
       const reclaimedName = seat.reclaimed ? seat.game.players.find((p) => p.playerId === seat.playerId)?.displayName : undefined
       navigate(`/parties/${id}`, { state: reclaimedName ? { reclaimedName } : undefined })
     })
@@ -123,6 +126,7 @@ export function HomePage() {
             {t('home.yourName')}
             <Input value={name} onChange={(e) => setName(e.target.value)} maxLength={MAX_NAME_LENGTH} autoComplete="nickname" autoFocus />
           </label>
+          <CommanderPicker value={commander} onChange={setCommander} />
           <Button type="submit" disabled={busy || !validName}>
             {target?.status === 'InProgress' ? t('home.reclaimSeat') : t('home.join')}
           </Button>

@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { GameState, PlayerState } from '../api/types'
+import { CommanderBackdrop } from './CommanderBackdrop'
 import { FinishCountdown } from './FinishCountdown'
 import { PlayerCounters, PlayerDetails, type CounterActions } from './PlayerDetails'
 import { PlayerTile } from './PlayerTile'
@@ -37,15 +38,18 @@ export function GameBoard({
       <FinishCountdown game={game} onCancel={me ? onCancelFinish : undefined} />
 
       {me && (
-        <Card className={me.isEliminated || me.conceded ? 'opacity-70' : ''}>
-          <div className="mb-3 flex items-baseline justify-between gap-2">
-            <h2 className="truncate text-xl font-black">{me.displayName}</h2>
-            {(me.isEliminated || me.conceded) && <span className="text-sm text-rose-400">{me.conceded ? t('game.conceded') : t('game.eliminated')}</span>}
+        <Card className={`relative overflow-hidden ${me.isEliminated || me.conceded ? 'opacity-70' : ''}`}>
+          <CommanderBackdrop commander={me.commander} />
+          <div className="relative">
+            <div className="mb-3 flex items-baseline justify-between gap-2">
+              <h2 className="truncate text-xl font-black">{me.displayName}</h2>
+              {(me.isEliminated || me.conceded) && <span className="text-sm text-rose-400">{me.conceded ? t('game.conceded') : t('game.eliminated')}</span>}
+            </div>
+            <PlayerCounters large game={game} player={me} actions={actions} />
+            <Button className="mt-4 w-full" variant="secondary" onClick={onToggleConcede} disabled={busy}>
+              {me.conceded ? t('game.unconcede') : t('game.concede')}
+            </Button>
           </div>
-          <PlayerCounters large game={game} player={me} actions={actions} />
-          <Button className="mt-4 w-full" variant="secondary" onClick={onToggleConcede} disabled={busy}>
-            {me.conceded ? t('game.unconcede') : t('game.concede')}
-          </Button>
         </Card>
       )}
 

@@ -1,5 +1,5 @@
 metadata name = 'Container Registry'
-metadata description = 'Deploys the Azure Container Registry that stores the API and web images. Admin user is disabled; pulls use managed identity.'
+metadata description = 'Deploys the Azure Container Registry that stores the app image. Admin user is disabled; pulls use managed identity.'
 
 /* Parameters */
 

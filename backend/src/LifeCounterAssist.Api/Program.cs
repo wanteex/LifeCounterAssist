@@ -38,6 +38,7 @@ app.UseStaticFiles();
 
 app.MapHealthChecks("/health");
 app.MapApi();
+app.Map("/api/{**rest}", () => Results.NotFound());
 app.MapHub<GameHub>("/hubs/game");
 app.MapFallbackToFile("index.html");
 

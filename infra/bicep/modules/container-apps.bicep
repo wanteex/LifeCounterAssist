@@ -1,11 +1,9 @@
 metadata name = 'Container Apps'
-metadata description = 'Deploys the Container Apps environment, the API app (single replica, WebSocket-capable ingress for SignalR) and the web app (nginx serving the PWA).'
-
-import { AuthConfig } from '../types.bicep'
+metadata description = 'Deploys the Container Apps environment and the single app serving the API, SignalR hub and front (one replica, WebSocket-capable ingress).'
 
 /* Parameters */
 
-@description('Azure region for the environment and apps.')
+@description('Azure region for the environment and app.')
 param location string
 
 @description('Resource tags.')
@@ -13,7 +11,7 @@ param tags object
 
 /* Identity parameters */
 
-@description('Name of the existing user-assigned managed identity used for image pulls and storage access.')
+@description('Name of the existing user-assigned managed identity used for image pulls.')
 param identityName string
 
 /* Monitoring parameters */
@@ -26,31 +24,14 @@ param workspaceName string
 @description('Container Apps environment name.')
 param environmentName string
 
-@description('API container app name.')
-param apiAppName string
-
-@description('Web container app name.')
-param webAppName string
+@description('Container app name.')
+param appName string
 
 @description('Container registry login server.')
 param registryLoginServer string
 
-@description('Full API image reference, for example myregistry.azurecr.io/lca-api:1.0.0.')
-param apiImage string
-
-@description('Full web image reference, for example myregistry.azurecr.io/lca-web:1.0.0.')
-param webImage string
-
-@description('Maximum number of web replicas.')
-param webMaxReplicas int
-
-/* Settings parameters */
-
-@description('Microsoft Entra External ID settings.')
-param auth AuthConfig
-
-@description('Table service endpoint of the storage account.')
-param tableEndpoint string
+@description('Full image reference, for example myregistry.azurecr.io/lca-app:1.0.0.')
+param image string
 
 /* Resources */
 
@@ -83,17 +64,8 @@ resource environment 'Microsoft.App/managedEnvironments@2024-03-01' = {
   }
 }
 
-var webOrigin string = 'https://${webAppName}.${environment.properties.defaultDomain}'
-
-var registries = [
-  {
-    server: registryLoginServer
-    identity: identity.id
-  }
-]
-
-resource apiApp 'Microsoft.App/containerApps@2024-03-01' = {
-  name: apiAppName
+resource app 'Microsoft.App/containerApps@2024-03-01' = {
+  name: appName
   location: location
   tags: tags
   identity: {
@@ -107,7 +79,12 @@ resource apiApp 'Microsoft.App/containerApps@2024-03-01' = {
     workloadProfileName: 'Consumption'
     configuration: {
       activeRevisionsMode: 'Single'
-      registries: registries
+      registries: [
+        {
+          server: registryLoginServer
+          identity: identity.id
+        }
+      ]
       ingress: {
         external: true
         targetPort: 8080
@@ -118,20 +95,14 @@ resource apiApp 'Microsoft.App/containerApps@2024-03-01' = {
     template: {
       containers: [
         {
-          name: 'api'
-          image: apiImage
+          name: 'app'
+          image: image
           resources: {
             cpu: json('0.5')
             memory: '1Gi'
           }
           env: [
             { name: 'ASPNETCORE_ENVIRONMENT', value: 'Production' }
-            { name: 'Auth__Mode', value: 'Entra' }
-            { name: 'Auth__Authority', value: auth.apiAuthority }
-            { name: 'Auth__Audience', value: auth.apiAudience }
-            { name: 'Storage__TableEndpoint', value: tableEndpoint }
-            { name: 'Storage__ManagedIdentityClientId', value: identity.properties.clientId }
-            { name: 'Cors__AllowedOrigins__0', value: webOrigin }
           ]
           probes: [
             {
@@ -154,7 +125,7 @@ resource apiApp 'Microsoft.App/containerApps@2024-03-01' = {
           ]
         }
       ]
-      // Game state is cached in memory with per-game locks: exactly one replica.
+      // Game state is held in memory: exactly one replica, never scaled to zero.
       scale: {
         minReplicas: 1
         maxReplicas: 1
@@ -163,58 +134,7 @@ resource apiApp 'Microsoft.App/containerApps@2024-03-01' = {
   }
 }
 
-resource webApp 'Microsoft.App/containerApps@2024-03-01' = {
-  name: webAppName
-  location: location
-  tags: tags
-  identity: {
-    type: 'UserAssigned'
-    userAssignedIdentities: {
-      '${identity.id}': {}
-    }
-  }
-  properties: {
-    environmentId: environment.id
-    workloadProfileName: 'Consumption'
-    configuration: {
-      activeRevisionsMode: 'Single'
-      registries: registries
-      ingress: {
-        external: true
-        targetPort: 8080
-        allowInsecure: false
-      }
-    }
-    template: {
-      containers: [
-        {
-          name: 'web'
-          image: webImage
-          resources: {
-            cpu: json('0.25')
-            memory: '0.5Gi'
-          }
-          env: [
-            { name: 'API_URL', value: 'https://${apiApp.properties.configuration.ingress.fqdn}' }
-            { name: 'AUTH_MODE', value: 'entra' }
-            { name: 'ENTRA_CLIENT_ID', value: auth.spaClientId }
-            { name: 'ENTRA_AUTHORITY', value: auth.spaAuthority }
-            { name: 'ENTRA_API_SCOPE', value: auth.apiScope }
-          ]
-        }
-      ]
-      scale: {
-        minReplicas: 0
-        maxReplicas: webMaxReplicas
-      }
-    }
-  }
-}
-
 /* Outputs */
 
-@description('Public URL of the web app (also the SPA redirect URI to register in Entra).')
-output webUrl string = 'https://${webApp.properties.configuration.ingress.fqdn}'
-
-@description('Public URL of the API.')
-output apiUrl string = 'https://${apiApp.properties.configuration.ingress.fqdn}'
+@description('Public URL of the app.')
+output appUrl string = 'https://${app.properties.configuration.ingress.fqdn}'

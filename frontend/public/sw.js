@@ -18,7 +18,7 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
   const request = event.request
   const url = new URL(request.url)
-  if (request.method !== 'GET' || url.origin !== self.location.origin || url.pathname === '/config.js') return
+  if (request.method !== 'GET' || url.origin !== self.location.origin) return
 
   // Network first, falling back to cache (navigation falls back to the cached shell).
   event.respondWith(

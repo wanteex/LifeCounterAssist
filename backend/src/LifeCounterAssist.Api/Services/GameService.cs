@@ -32,7 +32,7 @@ public sealed record GameSummaryDto(
     string Id, string HostName, int PlayerCount, int StartingLife, GameStatus Status, DateTimeOffset CreatedAt);
 
 /// <summary>Owns the in-memory games, seat tokens and room-screen selection. Single instance only.</summary>
-public sealed class GameService(IGameNotifier notifier, TimeProvider clock)
+public sealed class GameService(IGameNotifier notifier, TimeProvider clock, ILogger<GameService> logger)
 {
     private static readonly TimeSpan FinishedDisplay = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan FinishedRetention = TimeSpan.FromMinutes(10);
@@ -41,6 +41,8 @@ public sealed class GameService(IGameNotifier notifier, TimeProvider clock)
     private readonly ConcurrentDictionary<string, GameState> _games = new();
     private readonly ConcurrentDictionary<string, Dictionary<string, string>> _seats = new();
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _locks = new();
+    // Serializes list/screen computation and publication so concurrent actions cannot publish out of order.
+    private readonly SemaphoreSlim _publishGate = new(1, 1);
     private string? _screenGameId;
 
     /// <summary>Creates a game with the caller seated as host.</summary>
@@ -49,7 +51,7 @@ public sealed class GameService(IGameNotifier notifier, TimeProvider clock)
     /// <returns>The host seat.</returns>
     public async Task<SeatDto> CreateAsync(CreateGameRequest r, CancellationToken ct = default)
     {
-        var gameId = Guid.NewGuid().ToString("N")[..8];
+        var gameId = Guid.NewGuid().ToString("N");
         var playerId = NewId();
         var state = GameRules.Create(gameId, playerId, r.Name, r.StartingLife, clock.GetUtcNow());
         var token = NewToken();
@@ -193,9 +195,14 @@ public sealed class GameService(IGameNotifier notifier, TimeProvider clock)
         }
 
         // Completed games already broadcast list and screen; only removals and the 30 s display expiry remain.
-        var screen = GetFeatured();
-        if (removed) await notifier.ListChangedAsync(List(), ct);
-        if (removed || screen?.Id != _screenGameId) await PublishScreenAsync(screen, ct);
+        await _publishGate.WaitAsync(ct);
+        try
+        {
+            var screen = GetFeatured();
+            if (removed) await NotifySafelyAsync(() => notifier.ListChangedAsync(List(), ct), "list");
+            if (removed || screen?.Id != _screenGameId) await PublishScreenAsync(screen, ct);
+        }
+        finally { _publishGate.Release(); }
     }
 
     private static bool IsExpired(GameState g, DateTimeOffset now) =>
@@ -205,15 +212,31 @@ public sealed class GameService(IGameNotifier notifier, TimeProvider clock)
 
     private async Task BroadcastAsync(GameState state, CancellationToken ct)
     {
-        await notifier.GameUpdatedAsync(Clone(state), ct);
-        await notifier.ListChangedAsync(List(), ct);
-        await PublishScreenAsync(GetFeatured(), ct);
+        await NotifySafelyAsync(() => notifier.GameUpdatedAsync(Clone(state), ct), "game");
+        await _publishGate.WaitAsync(ct);
+        try
+        {
+            await NotifySafelyAsync(() => notifier.ListChangedAsync(List(), ct), "list");
+            await PublishScreenAsync(GetFeatured(), ct);
+        }
+        finally { _publishGate.Release(); }
     }
 
-    private Task PublishScreenAsync(GameState? featured, CancellationToken ct)
+    // Must be called while holding _publishGate.
+    private async Task PublishScreenAsync(GameState? featured, CancellationToken ct)
     {
         _screenGameId = featured?.Id;
-        return notifier.ScreenChangedAsync(featured, ct);
+        await NotifySafelyAsync(() => notifier.ScreenChangedAsync(featured, ct), "screen");
+    }
+
+    // The state change is already committed: a notification failure must never surface as an action error.
+    private async Task NotifySafelyAsync(Func<Task> notify, string what)
+    {
+        try { await notify(); }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogError(ex, "Failed to publish {Notification} notification", what);
+        }
     }
 
     private GameState GetOrThrow(string gameId) =>

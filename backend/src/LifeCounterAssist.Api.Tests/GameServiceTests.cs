@@ -2,6 +2,7 @@ using System.Text.Json;
 using LifeCounterAssist.Api.Domain;
 using LifeCounterAssist.Api.Infrastructure;
 using LifeCounterAssist.Api.Services;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Time.Testing;
 
 namespace LifeCounterAssist.Api.Tests;
@@ -11,10 +12,11 @@ public sealed class FakeNotifier : IGameNotifier
     public List<GameState> Updated { get; } = [];
     public List<IReadOnlyList<GameSummaryDto>> Lists { get; } = [];
     public List<GameState?> Screens { get; } = [];
+    public bool Throw { get; set; }
 
-    public Task GameUpdatedAsync(GameState state, CancellationToken ct) { Updated.Add(state); return Task.CompletedTask; }
-    public Task ListChangedAsync(IReadOnlyList<GameSummaryDto> games, CancellationToken ct) { Lists.Add(games); return Task.CompletedTask; }
-    public Task ScreenChangedAsync(GameState? featured, CancellationToken ct) { Screens.Add(featured); return Task.CompletedTask; }
+    public Task GameUpdatedAsync(GameState state, CancellationToken ct) { if (Throw) throw new InvalidOperationException("boom"); Updated.Add(state); return Task.CompletedTask; }
+    public Task ListChangedAsync(IReadOnlyList<GameSummaryDto> games, CancellationToken ct) { if (Throw) throw new InvalidOperationException("boom"); Lists.Add(games); return Task.CompletedTask; }
+    public Task ScreenChangedAsync(GameState? featured, CancellationToken ct) { if (Throw) throw new InvalidOperationException("boom"); Screens.Add(featured); return Task.CompletedTask; }
 }
 
 public class GameServiceTests
@@ -23,7 +25,7 @@ public class GameServiceTests
     private readonly FakeTimeProvider _clock = new(new DateTimeOffset(2026, 1, 1, 12, 0, 0, TimeSpan.Zero));
     private readonly GameService _service;
 
-    public GameServiceTests() => _service = new GameService(_notifier, _clock);
+    public GameServiceTests() => _service = new GameService(_notifier, _clock, NullLogger<GameService>.Instance);
 
     private async Task<SeatDto> StartedGameAsync(string host = "Host", string guest = "Guest")
     {
@@ -39,6 +41,43 @@ public class GameServiceTests
         var seat = await _service.CreateAsync(new CreateGameRequest("Host"));
         Assert.Equal(32, seat.SeatToken.Length);
         Assert.Matches("^[0-9a-f]{32}$", seat.SeatToken);
+    }
+
+    [Fact]
+    public async Task Create_ReturnsGameIdOf32HexChars()
+    {
+        var seat = await _service.CreateAsync(new CreateGameRequest("Host"));
+        Assert.Matches("^[0-9a-f]{32}$", seat.Game.Id);
+    }
+
+    [Fact]
+    public async Task Act_WithThrowingNotifier_DoesNotThrowAndStateIsUpdated()
+    {
+        var seat = await StartedGameAsync();
+        _notifier.Throw = true;
+        var target = seat.PlayerId;
+
+        var state = await _service.ActAsync(seat.Game.Id, seat.SeatToken,
+            (s, p) => GameRules.AdjustLife(s, p, target, -5, _clock.GetUtcNow()));
+
+        Assert.Equal(35, state.Players.Single(p => p.PlayerId == target).Life);
+        Assert.Equal(35, _service.Get(seat.Game.Id).Players.Single(p => p.PlayerId == target).Life);
+    }
+
+    [Fact]
+    public async Task Tick_WithThrowingNotifier_StillCompletesAllCountdowns()
+    {
+        var a = await StartedGameAsync("A1", "A2");
+        var b = await StartedGameAsync("B1", "B2");
+        foreach (var seat in new[] { a, b })
+            await _service.ActAsync(seat.Game.Id, seat.SeatToken, (s, p) =>
+                GameRules.ToggleConcede(s, p, s.Players.First(x => x.PlayerId != p).PlayerId, _clock.GetUtcNow()));
+        _notifier.Throw = true;
+
+        _clock.Advance(TimeSpan.FromSeconds(11));
+        await _service.TickAsync();
+
+        Assert.All(new[] { a, b }, seat => Assert.Equal(GameStatus.Finished, _service.Get(seat.Game.Id).Status));
     }
 
     [Fact]

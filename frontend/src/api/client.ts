@@ -1,6 +1,6 @@
 import { config } from '../config'
-import { saveSeat, setLastName } from '../seats'
-import type { GameState, GameSummary, SeatDto } from './types'
+import { saveSeat, setLastCommander, setLastName } from '../seats'
+import type { Commander, GameState, GameSummary, SeatDto } from './types'
 
 /** Error carrying the backend business code (ProblemDetails `code` or HubException message). */
 export class ApiError extends Error {
@@ -41,19 +41,23 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   return (await response.json()) as T
 }
 
+function remember(seat: SeatDto, name: string, commander?: Commander | null) {
+  saveSeat(seat.game.id, { playerId: seat.playerId, seatToken: seat.seatToken })
+  setLastName(name)
+  if (commander) setLastCommander(commander)
+}
+
 export const api = {
   games: () => request<GameSummary[]>('GET', '/api/games'),
   game: (id: string) => request<GameState>('GET', `/api/games/${encodeURIComponent(id)}`),
-  createGame: async (name: string, startingLife: number) => {
-    const seat = await request<SeatDto>('POST', '/api/games', { name, startingLife })
-    saveSeat(seat.game.id, { playerId: seat.playerId, seatToken: seat.seatToken })
-    setLastName(name)
+  createGame: async (name: string, startingLife: number, commander?: Commander | null) => {
+    const seat = await request<SeatDto>('POST', '/api/games', { name, startingLife, commander: commander ?? null })
+    remember(seat, name, commander)
     return seat
   },
-  joinGame: async (id: string, name: string) => {
-    const seat = await request<SeatDto>('POST', `/api/games/${encodeURIComponent(id)}/join`, { name })
-    saveSeat(seat.game.id, { playerId: seat.playerId, seatToken: seat.seatToken })
-    setLastName(name)
+  joinGame: async (id: string, name: string, commander?: Commander | null) => {
+    const seat = await request<SeatDto>('POST', `/api/games/${encodeURIComponent(id)}/join`, { name, commander: commander ?? null })
+    remember(seat, name, commander)
     return seat
   },
 }

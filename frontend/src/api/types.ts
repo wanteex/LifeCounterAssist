@@ -1,5 +1,13 @@
 export type GameStatus = 'Lobby' | 'InProgress' | 'Finished' | 'Cancelled'
 
+/** Commander card chosen by a player (from Scryfall). */
+export interface Commander {
+  name: string
+  /** Scryfall `art_crop` image URL. */
+  artUrl: string
+  artist: string
+}
+
 export interface PlayerState {
   playerId: string
   displayName: string
@@ -9,6 +17,7 @@ export interface PlayerState {
   commanderDamage: Record<string, number>
   conceded: boolean
   isEliminated: boolean
+  commander?: Commander | null
 }
 
 export interface GameLogEntry {

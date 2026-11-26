@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
+import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { errorCode } from '../api/client'
 import { gameHub } from '../api/hub'
 import { GameBoard } from '../components/GameBoard'
@@ -19,6 +19,8 @@ export function GamePage() {
   const navigate = useNavigate()
   const { id = '' } = useParams()
   const location = useLocation()
+  const [params] = useSearchParams()
+  const spectating = params.has('spectateur')
   const { game, error: watchError, connected } = useGame(id)
   const [seat, setSeat] = useState<Seat | null>(() => getSeat(id))
   const [sheetOpen, setSheetOpen] = useState(false)
@@ -32,8 +34,8 @@ export function GamePage() {
 
   // Drop the one-shot navigation state so a reload does not show the notice again.
   useEffect(() => {
-    if (location.state) navigate(location.pathname, { replace: true, state: null })
-  }, [location.state, location.pathname, navigate])
+    if (location.state) navigate(location.pathname + location.search, { replace: true, state: null })
+  }, [location.state, location.pathname, location.search, navigate])
 
   // The server no longer knows this game: forget the seat.
   useEffect(() => {
@@ -61,13 +63,13 @@ export function GamePage() {
   const me = (game && seat && game.players.find((p) => p.playerId === seat.playerId)) || null
   const status = game?.status
 
-  // Lobby without a seat: ask for the name once.
+  // Lobby without a seat: ask for the name once (not when the visitor chose to watch).
   useEffect(() => {
-    if (status === 'Lobby' && !seat && !autoPrompted.current) {
+    if (status === 'Lobby' && !seat && !spectating && !autoPrompted.current) {
       autoPrompted.current = true
       setSheetOpen(true)
     }
-  }, [status, seat])
+  }, [status, seat, spectating])
 
   // Cancelled game: forget the seat and go home after a moment.
   useEffect(() => {
@@ -148,6 +150,7 @@ export function GamePage() {
   } else if (game.status === 'Lobby') {
     content = (
       <>
+        {!me && <p className="text-sm text-slate-400">{t('game.readOnly')}</p>}
         <GameLobby
           game={game}
           myId={me?.playerId ?? null}
@@ -173,7 +176,7 @@ export function GamePage() {
           onCancelFinish={() => void run((tk) => gameHub.cancelPendingFinish(id, tk))}
           onFinish={() => void run((tk) => gameHub.finishGame(id, tk))}
         />
-        {!me && <Button onClick={() => setSheetOpen(true)}>{t('game.reclaim')}</Button>}
+        {!me && <Button variant={spectating ? 'ghost' : 'primary'} onClick={() => setSheetOpen(true)}>{t('game.reclaim')}</Button>}
       </>
     )
   }

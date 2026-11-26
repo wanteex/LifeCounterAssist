@@ -96,8 +96,8 @@ export function HomePage() {
             {games.map((g) => {
               const hasSeat = getSeat(g.id) !== null
               return (
-                <li key={g.id} className="flex items-center justify-between gap-2 rounded-xl bg-slate-900/60 p-3">
-                  <div className="min-w-0">
+                <li key={g.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-slate-900/60 p-3">
+                  <div className="min-w-0 flex-1 basis-40">
                     <p className="truncate font-semibold text-slate-100">{t('home.gameOf', { name: g.hostName })}</p>
                     <p className="text-sm text-slate-400">
                       {t('home.playersCount', { count: g.playerCount, max: MAX_PLAYERS })} · {t('home.life', { life: g.startingLife })} ·{' '}
@@ -106,12 +106,19 @@ export function HomePage() {
                   </div>
                   {hasSeat ? (
                     <Button onClick={() => navigate(`/parties/${g.id}`)}>{t('home.resume')}</Button>
-                  ) : g.status === 'Lobby' ? (
-                    <Button onClick={() => openJoin(g)}>{t('home.join')}</Button>
-                  ) : g.status === 'InProgress' ? (
-                    <Button variant="secondary" onClick={() => openJoin(g)}>
-                      {t('home.reclaimSeat')}
-                    </Button>
+                  ) : g.status === 'Lobby' || g.status === 'InProgress' ? (
+                    <div className="flex shrink-0 gap-2">
+                      <Button variant="ghost" onClick={() => navigate(`/parties/${g.id}?spectateur`)}>
+                        {t('home.watch')}
+                      </Button>
+                      {g.status === 'Lobby' ? (
+                        <Button onClick={() => openJoin(g)}>{t('home.join')}</Button>
+                      ) : (
+                        <Button variant="secondary" onClick={() => openJoin(g)}>
+                          {t('home.reclaimSeat')}
+                        </Button>
+                      )}
+                    </div>
                   ) : null}
                 </li>
               )

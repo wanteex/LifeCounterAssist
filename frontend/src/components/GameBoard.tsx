@@ -30,6 +30,8 @@ export function GameBoard({
   const { t } = useTranslation()
   const [detailsId, setDetailsId] = useState<string | null>(null)
   const [confirming, setConfirming] = useState(false)
+  const [nope, setNope] = useState(false)
+  const isHost = !!me && me.playerId === game.hostPlayerId
   const others = seatsAfter(game.players, me?.playerId)
   const details = game.players.find((p) => p.playerId === detailsId) ?? null
 
@@ -81,10 +83,22 @@ export function GameBoard({
             </div>
           </Card>
         ) : (
-          <Button variant="ghost" onClick={() => setConfirming(true)}>
+          // Only the host can end the game; anyone else gets an answer instead.
+          <Button variant="ghost" onClick={() => (isHost ? setConfirming(true) : setNope(true))}>
             {t('game.finish')}
           </Button>
         ))}
+
+      {nope && (
+        <button
+          type="button"
+          aria-label={t('game.onlyHostFinishes')}
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black"
+          onClick={() => setNope(false)}
+        >
+          <img src="/nope.jpg" alt={t('game.onlyHostFinishes')} className="h-full w-full object-contain" />
+        </button>
+      )}
 
       <PlayerDetails game={game} player={details} actions={actions} onClose={() => setDetailsId(null)} />
     </div>

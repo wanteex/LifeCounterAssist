@@ -481,4 +481,13 @@ public class GameRulesTests
         var s = NewGame(3);
         Assert.Throws<DomainException>(() => GameRules.MovePlayer(s, "p1", "p2", offset, Now));
     }
+
+    [Fact]
+    public void Finish_ByNonHost_Forbidden()
+    {
+        var s = Started();
+        var ex = Assert.Throws<ForbiddenException>(() => GameRules.Finish(s, "p2", Now));
+        Assert.Equal("host_only", ex.Code);
+        Assert.Equal(GameStatus.InProgress, s.Status);
+    }
 }

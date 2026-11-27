@@ -106,4 +106,7 @@ export const gameHub = {
     invoke('ToggleConcede', gameId, seatToken, targetPlayerId),
   cancelPendingFinish: (gameId: string, seatToken: string) => invoke('CancelPendingFinish', gameId, seatToken),
   finishGame: (gameId: string, seatToken: string) => invoke('FinishGame', gameId, seatToken),
+  endTurn: (gameId: string, seatToken: string) => invoke('EndTurn', gameId, seatToken),
+  toggleCombat: (gameId: string, seatToken: string) => invoke('ToggleCombat', gameId, seatToken),
+  togglePause: (gameId: string, seatToken: string) => invoke('TogglePause', gameId, seatToken),
 }

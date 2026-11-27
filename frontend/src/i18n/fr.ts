@@ -40,6 +40,7 @@ const fr: Translation = {
     start: 'Démarrer',
     cancelGame: 'Annuler la partie',
     leave: 'Quitter',
+    invite: 'Fais scanner pour rejoindre',
     onlyHostStarts: "En attente du lancement par l'hôte.",
     host: 'hôte',
     cancelled: 'Cette partie a été annulée.',
@@ -75,7 +76,7 @@ const fr: Translation = {
     unavailable: 'Recherche indisponible, tu peux jouer sans',
     artist: 'Illus. {{artist}}',
   },
-  screen: { scan: 'Scanne pour jouer', lobbyOf: 'Partie de {{name}} · {{life}} PV', finished: 'Partie terminée' },
+  screen: { scan: 'Scanne pour jouer', lobbyOf: 'Partie de {{name}} · {{life}} PV', finished: 'Partie terminée', watch: 'Scanne pour regarder' },
   errors: {
     invalid_name: 'Pseudo invalide (1 à 20 caractères).',
     invalid_seat: 'Place invalide.',

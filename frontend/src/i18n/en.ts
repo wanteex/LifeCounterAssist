@@ -39,6 +39,7 @@ const en = {
     start: 'Start',
     cancelGame: 'Cancel game',
     leave: 'Leave',
+    invite: 'Let others scan to join',
     onlyHostStarts: 'Waiting for the host to start the game.',
     host: 'host',
     cancelled: 'This game was cancelled.',
@@ -74,7 +75,7 @@ const en = {
     unavailable: 'Search unavailable, you can play without one',
     artist: 'Art {{artist}}',
   },
-  screen: { scan: 'Scan to play', lobbyOf: "{{name}}'s game · {{life}} life", finished: 'Game over' },
+  screen: { scan: 'Scan to play', lobbyOf: "{{name}}'s game · {{life}} life", finished: 'Game over', watch: 'Scan to watch' },
   errors: {
     invalid_name: 'Invalid name (1 to 20 characters).',
     invalid_seat: 'Invalid seat.',

@@ -1,3 +1,4 @@
+import { QRCodeSVG } from 'qrcode.react'
 import { useTranslation } from 'react-i18next'
 import { MAX_PLAYERS, type GameState } from '../api/types'
 import { PlayerTile } from './PlayerTile'
@@ -47,6 +48,15 @@ export function GameLobby({
           </Button>
         </div>
       ) : null}
+      {myId !== null && (
+        // Invite link: before the start it asks for a name and seats the newcomer.
+        <div className="mt-6 flex flex-col items-center gap-2">
+          <div className="w-1/2 max-w-48 rounded-2xl bg-white p-2.5">
+            <QRCodeSVG value={`${window.location.origin}/parties/${encodeURIComponent(game.id)}`} className="h-auto w-full" />
+          </div>
+          <p className="text-sm text-slate-400">{t('game.invite')}</p>
+        </div>
+      )}
     </Card>
   )
 }

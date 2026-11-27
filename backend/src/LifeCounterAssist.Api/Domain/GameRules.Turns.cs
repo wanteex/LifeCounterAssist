@@ -85,5 +85,64 @@ public static partial class GameRules
         turn.RunningSince = turn.Paused ? null : now;
         turn.LimitSeconds = state.Blitz is { } b ? TurnLimitSeconds(b.BaseSeconds, turn.Round) : null;
         AddLog(state, new GameLogEntry(now, actor, logMessage, turn.ActivePlayerId), now);
+        SyncTurn(state, now);
     }
+
+    /// <summary>Starts or ends the combat phase, which freezes the Blitz clock.</summary>
+    /// <param name="state">Game state.</param>
+    /// <param name="actor">Must be the active player or the host.</param>
+    /// <param name="now">Current time.</param>
+    /// <exception cref="ForbiddenException">Thrown when the actor is neither the active player nor the host.</exception>
+    /// <exception cref="DomainException">Thrown when the game is not a Blitz game in progress.</exception>
+    public static void ToggleCombat(GameState state, string actor, DateTimeOffset now)
+    {
+        var turn = EnsureTurnActor(state, actor);
+        if (state.Mode != GameMode.Blitz) throw new DomainException("blitz_only");
+        turn.Combat = !turn.Combat;
+        AddLog(state, new GameLogEntry(now, actor, turn.Combat ? "combat_started" : "combat_ended", turn.ActivePlayerId), now);
+        SyncTurn(state, now);
+    }
+
+    /// <summary>Pauses or resumes the Blitz clock (host only).</summary>
+    /// <param name="state">Game state.</param>
+    /// <param name="actor">Must be the host.</param>
+    /// <param name="now">Current time.</param>
+    /// <exception cref="ForbiddenException">Thrown when the actor is not the host.</exception>
+    /// <exception cref="DomainException">Thrown when the game is not a Blitz game in progress.</exception>
+    public static void TogglePause(GameState state, string actor, DateTimeOffset now)
+    {
+        EnsureInProgress(state);
+        if (actor != state.HostPlayerId) throw new ForbiddenException("host_only");
+        if (state.Mode != GameMode.Blitz || state.Turn is not { } turn) throw new DomainException("blitz_only");
+        turn.Paused = !turn.Paused;
+        AddLog(state, new GameLogEntry(now, actor, turn.Paused ? "paused" : "resumed"), now);
+        SyncTurn(state, now);
+    }
+
+    /// <summary>Starts or freezes the turn clock to match the game: it runs only while the game is in progress,
+    /// outside combat and pause, and while the active player and at least one opponent are still in the game.</summary>
+    /// <param name="state">Game state.</param>
+    /// <param name="now">Current time.</param>
+    public static void SyncTurn(GameState state, DateTimeOffset now)
+    {
+        if (state.Turn is not { } turn) return;
+        var active = state.FindPlayer(turn.ActivePlayerId);
+        var alive = state.Players.Count(p => !p.IsEliminated);
+        var shouldRun = state.Status == GameStatus.InProgress
+            && !turn.Combat
+            && !turn.Paused
+            && turn.SkipAt is null
+            && active is { IsEliminated: false }
+            && alive >= 2;
+
+        if (shouldRun && turn.RunningSince is null) turn.RunningSince = now;
+        else if (!shouldRun && turn.RunningSince is { } since)
+        {
+            turn.ElapsedMs += (long)(now - since).TotalMilliseconds;
+            turn.RunningSince = null;
+        }
+    }
+
+    private static long UsedMs(TurnState turn, DateTimeOffset now) =>
+        turn.ElapsedMs + (turn.RunningSince is { } since ? (long)(now - since).TotalMilliseconds : 0);
 }

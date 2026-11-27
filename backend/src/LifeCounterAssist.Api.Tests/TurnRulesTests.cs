@@ -165,4 +165,94 @@ public class TurnRulesTests
         var ex = Assert.Throws<DomainException>(() => GameRules.EndTurn(s, "p1", Now));
         Assert.Equal("game_not_in_progress", ex.Code);
     }
+
+    // Task 3
+
+    [Fact]
+    public void ToggleCombat_FreezesThenResumes()
+    {
+        var s = Blitz();
+        GameRules.ToggleCombat(s, "p1", At(10));
+        Assert.True(s.Turn!.Combat);
+        Assert.Equal(10000, s.Turn.ElapsedMs);
+        Assert.Null(s.Turn.RunningSince);
+        GameRules.ToggleCombat(s, "p1", At(20));
+        Assert.False(s.Turn.Combat);
+        Assert.Equal(At(20), s.Turn.RunningSince);
+        Assert.Equal(10000, s.Turn.ElapsedMs);
+    }
+
+    [Fact]
+    public void ToggleCombat_Normal_Throws()
+    {
+        var ex = Assert.Throws<DomainException>(() => GameRules.ToggleCombat(Started(), "p1", At(1)));
+        Assert.Equal("blitz_only", ex.Code);
+    }
+
+    [Fact]
+    public void ToggleCombat_ByOtherPlayer_Forbidden()
+    {
+        var ex = Assert.Throws<ForbiddenException>(() => GameRules.ToggleCombat(Blitz(), "p2", At(1)));
+        Assert.Equal("not_your_turn", ex.Code);
+    }
+
+    [Fact]
+    public void TogglePause_HostOnly()
+    {
+        var s = Blitz();
+        GameRules.EndTurn(s, "p1", At(1));
+        var ex = Assert.Throws<ForbiddenException>(() => GameRules.TogglePause(s, "p2", At(2)));
+        Assert.Equal("host_only", ex.Code);
+    }
+
+    [Fact]
+    public void TogglePause_FreezesThenResumes()
+    {
+        var s = Blitz();
+        GameRules.TogglePause(s, "p1", At(4));
+        Assert.True(s.Turn!.Paused);
+        Assert.Null(s.Turn.RunningSince);
+        GameRules.TogglePause(s, "p1", At(30));
+        Assert.Equal(At(30), s.Turn.RunningSince);
+        Assert.Equal(4000, s.Turn.ElapsedMs);
+    }
+
+    [Fact]
+    public void Resume_WhileCombat_StaysFrozen()
+    {
+        var s = Blitz();
+        GameRules.ToggleCombat(s, "p1", At(1));
+        GameRules.TogglePause(s, "p1", At(2));
+        GameRules.TogglePause(s, "p1", At(3));
+        Assert.Null(s.Turn!.RunningSince);
+        GameRules.ToggleCombat(s, "p1", At(4));
+        Assert.Equal(At(4), s.Turn.RunningSince);
+    }
+
+    [Fact]
+    public void LifeChange_DuringCombat_DoesNotRestartClock()
+    {
+        var s = Blitz();
+        GameRules.ToggleCombat(s, "p1", At(1));
+        GameRules.AdjustLife(s, "p2", "p2", -3, At(2));
+        Assert.Null(s.Turn!.RunningSince);
+    }
+
+    [Fact]
+    public void Finish_FreezesClock()
+    {
+        var s = Started();
+        GameRules.Finish(s, "p1", At(7));
+        Assert.Null(s.Turn!.RunningSince);
+        Assert.Equal(7000, s.Turn.ElapsedMs);
+    }
+
+    [Fact]
+    public void SingleSurvivor_FreezesClock()
+    {
+        var s = Started(players: 2);
+        Kill(s, "p2", At(3));
+        Assert.Null(s.Turn!.RunningSince);
+        Assert.Equal(3000, s.Turn.ElapsedMs);
+    }
 }

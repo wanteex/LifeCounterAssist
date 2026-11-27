@@ -313,6 +313,7 @@ public static partial class GameRules
         state.FinishedAt = now;
         state.WinnerPlayerId = null;
         ClearPending(state);
+        SyncTurn(state, now);
         AddLog(state, new GameLogEntry(now, actor, "finished"), now);
     }
 
@@ -330,11 +331,18 @@ public static partial class GameRules
         state.WinnerPlayerId = winner;
         state.FinishedAt = now;
         ClearPending(state);
+        SyncTurn(state, now);
         AddLog(state, new GameLogEntry(now, winner ?? "", "finished"), now);
         return true;
     }
 
     private static void RefreshPendingFinish(GameState state, DateTimeOffset now)
+    {
+        RefreshPendingWinner(state, now);
+        SyncTurn(state, now);
+    }
+
+    private static void RefreshPendingWinner(GameState state, DateTimeOffset now)
     {
         var alive = state.Players.Where(p => !p.IsEliminated).ToList();
         if (alive.Count == 1)

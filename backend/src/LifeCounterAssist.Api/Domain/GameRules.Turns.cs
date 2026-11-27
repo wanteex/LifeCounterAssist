@@ -44,11 +44,14 @@ public static partial class GameRules
     /// <param name="state">Game state.</param>
     /// <param name="actor">Must be the active player or the host.</param>
     /// <param name="now">Current time.</param>
+    /// <param name="expectedActivePlayerId">Player whose turn the caller is ending; when the turn has already
+    /// passed (another tap, auto-skip), nothing happens so a stale tap never skips the next player.</param>
     /// <exception cref="ForbiddenException">Thrown when the actor is neither the active player nor the host.</exception>
     /// <exception cref="DomainException">Thrown when the game is not in progress.</exception>
-    public static void EndTurn(GameState state, string actor, DateTimeOffset now)
+    public static void EndTurn(GameState state, string actor, DateTimeOffset now, string? expectedActivePlayerId = null)
     {
         var turn = EnsureTurnActor(state, actor);
+        if (expectedActivePlayerId is not null && expectedActivePlayerId != turn.ActivePlayerId) return;
         AdvanceTurn(state, turn, actor, now, "turn_ended");
     }
 

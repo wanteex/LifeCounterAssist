@@ -173,7 +173,7 @@ export function GamePage() {
           game={game}
           myId={me?.playerId ?? null}
           busy={busy}
-          onEndTurn={() => void run((tk) => gameHub.endTurn(id, tk))}
+          onEndTurn={() => game.turn && void run((tk) => gameHub.endTurn(id, tk, game.turn!.activePlayerId))}
           onCombat={() => void run((tk) => gameHub.toggleCombat(id, tk))}
           onPause={() => void run((tk) => gameHub.togglePause(id, tk))}
         />

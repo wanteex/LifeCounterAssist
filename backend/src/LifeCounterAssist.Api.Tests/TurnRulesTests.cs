@@ -410,4 +410,26 @@ public class TurnRulesTests
         Assert.Equal(At(16) + GameRules.TurnSkipDelay, s.Turn!.SkipAt);
         Assert.Null(s.Turn.RunningSince);
     }
+
+    // Final review: stale "End turn" taps
+
+    [Fact]
+    public void EndTurn_ExpectingPreviousPlayer_AfterAutoSkip_DoesNothing()
+    {
+        var s = Started();
+        Kill(s, "p1", Now);
+        GameRules.CompletePendingSkip(s, At(5));
+        GameRules.EndTurn(s, "p1", At(5.2), expectedActivePlayerId: "p1");
+        Assert.Equal("p2", s.Turn!.ActivePlayerId);
+        Assert.Equal(1, s.Turn.Round);
+    }
+
+    [Fact]
+    public void EndTurn_TwoTapsForSameTurn_MovesOneSeat()
+    {
+        var s = Started();
+        GameRules.EndTurn(s, "p1", At(1), expectedActivePlayerId: "p1");
+        GameRules.EndTurn(s, "p1", At(1.1), expectedActivePlayerId: "p1");
+        Assert.Equal("p2", s.Turn!.ActivePlayerId);
+    }
 }

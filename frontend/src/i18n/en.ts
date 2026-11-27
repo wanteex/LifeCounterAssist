@@ -58,6 +58,7 @@ const en = {
     chooseName: 'Enter your name',
     finish: 'End game',
     finishConfirm: 'End the game now?',
+    onlyHostFinishes: 'Only the host can end the game',
     finished: 'Game over',
     winner: '{{name}} wins!',
     concede: 'I concede',

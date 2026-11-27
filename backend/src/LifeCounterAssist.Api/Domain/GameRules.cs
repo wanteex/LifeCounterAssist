@@ -302,13 +302,14 @@ public static partial class GameRules
         AddLog(state, new GameLogEntry(now, actor, "finish_cancelled"), now);
     }
 
-    /// <summary>Ends the game manually, without a winner.</summary>
+    /// <summary>Ends the game manually, without a winner (host only).</summary>
     /// <param name="state">Game state.</param>
     /// <param name="actor">Player ending the game.</param>
     /// <param name="now">Current time.</param>
     public static void Finish(GameState state, string actor, DateTimeOffset now)
     {
         EnsureInProgress(state);
+        if (actor != state.HostPlayerId) throw new ForbiddenException("host_only");
         state.Status = GameStatus.Finished;
         state.FinishedAt = now;
         state.WinnerPlayerId = null;

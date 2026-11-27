@@ -58,6 +58,7 @@ const fr: Translation = {
     reclaimed: 'Tu as repris la place de {{name}}',
     chooseName: 'Entre ton pseudo',
     finish: 'Terminer la partie',
+    onlyHostFinishes: "Seul l'hôte peut terminer la partie",
     finishConfirm: 'Terminer la partie maintenant ?',
     finished: 'Partie terminée',
     winner: '{{name}} gagne !',

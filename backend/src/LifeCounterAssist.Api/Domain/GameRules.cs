@@ -2,7 +2,7 @@ namespace LifeCounterAssist.Api.Domain;
 
 /// <summary>Pure rule functions mutating a <see cref="GameState"/>.</summary>
 /// <remarks>Callers are responsible for synchronization.</remarks>
-public static class GameRules
+public static partial class GameRules
 {
     /// <summary>Commander damage from a single source that eliminates a player.</summary>
     public const int LethalCommanderDamage = 21;
@@ -72,17 +72,24 @@ public static class GameRules
     /// <param name="commander">Host commander, if any.</param>
     /// <returns>The new game.</returns>
     /// <exception cref="DomainException">Thrown when settings are invalid.</exception>
-    public static GameState Create(string id, string hostPlayerId, string hostName, int startingLife, DateTimeOffset now, CommanderInfo? commander = null)
+    /// <param name="mode">How the game is played.</param>
+    /// <param name="blitz">Blitz options; defaults apply when <see langword="null"/>, ignored in normal mode.</param>
+    public static GameState Create(
+        string id, string hostPlayerId, string hostName, int startingLife, DateTimeOffset now,
+        CommanderInfo? commander = null, GameMode mode = GameMode.Normal, BlitzSettings? blitz = null)
     {
         if (!AllowedStartingLife.Contains(startingLife)) throw new DomainException("invalid_starting_life");
         var name = NormalizeName(hostName);
         var hostCommander = NormalizeCommander(commander);
+        var settings = NormalizeBlitz(mode, blitz);
 
         var state = new GameState
         {
             Id = id,
             HostPlayerId = hostPlayerId,
             StartingLife = startingLife,
+            Mode = mode,
+            Blitz = settings,
             CreatedAt = now,
             LastActivityAt = now,
             Players = [new PlayerState { PlayerId = hostPlayerId, DisplayName = name, Life = startingLife, Commander = hostCommander }],
@@ -197,6 +204,7 @@ public static class GameRules
 
         state.Status = GameStatus.InProgress;
         state.StartedAt = now;
+        StartTurns(state, now);
         AddLog(state, new GameLogEntry(now, actorPlayerId, "started"), now);
     }
 

@@ -8,6 +8,7 @@ import { GameLobby } from '../components/GameLobby'
 import { NameSheet } from '../components/NameSheet'
 import type { CounterActions } from '../components/PlayerDetails'
 import { PlayerTile } from '../components/PlayerTile'
+import { TurnBar } from '../components/TurnBar'
 import { Button, Card, ErrorBanner, Spinner } from '../components/ui'
 import { useGame } from '../hooks/useGame'
 import { usePendingDeltas, useRecentLifeChanges } from '../hooks/useOptimistic'
@@ -168,6 +169,14 @@ export function GamePage() {
     content = (
       <>
         {!me && <p className="text-sm text-slate-400">{t('game.readOnly')}</p>}
+        <TurnBar
+          game={game}
+          myId={me?.playerId ?? null}
+          busy={busy}
+          onEndTurn={() => game.turn && void run((tk) => gameHub.endTurn(id, tk, game.turn!.activePlayerId))}
+          onCombat={() => void run((tk) => gameHub.toggleCombat(id, tk))}
+          onPause={() => void run((tk) => gameHub.togglePause(id, tk))}
+        />
         <GameBoard
           game={game}
           me={me}

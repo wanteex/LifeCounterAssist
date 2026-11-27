@@ -34,10 +34,38 @@ export interface GameLogEntry {
   detail?: string | null
 }
 
+export type GameMode = 'Normal' | 'Blitz'
+
+export interface BlitzSettings {
+  baseSeconds: number
+  penalty: boolean
+}
+
+export interface TurnState {
+  activePlayerId: string
+  round: number
+  /** Time used this turn, excluding the running period. */
+  elapsedMs: number
+  /** When the clock last started; null while frozen. */
+  runningSince?: string | null
+  combat: boolean
+  paused: boolean
+  penaltySeconds: number
+  /** When the turn passes because the active player is eliminated. */
+  skipAt?: string | null
+  /** Turn limit in seconds (Blitz). */
+  limitSeconds?: number | null
+}
+
 export interface GameState {
   id: string
   hostPlayerId: string
   status: GameStatus
+  mode: GameMode
+  blitz?: BlitzSettings | null
+  turn?: TurnState | null
+  /** Server clock when this copy was sent. */
+  serverTime: string
   startingLife: number
   createdAt: string
   startedAt?: string | null
@@ -72,3 +100,4 @@ export interface SeatDto {
 export const MAX_PLAYERS = 8
 export const MAX_NAME_LENGTH = 20
 export const LIFE_OPTIONS = [20, 25, 30, 40] as const
+export const BLITZ_BASE_OPTIONS = [15, 30, 60] as const

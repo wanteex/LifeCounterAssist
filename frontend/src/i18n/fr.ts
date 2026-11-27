@@ -32,6 +32,12 @@ const fr: Translation = {
     title: 'Nouvelle partie',
     yourName: 'Ton pseudo',
     startingLife: 'Points de vie de départ',
+    mode: 'Mode de jeu',
+    modeNormal: 'Normal',
+    modeBlitz: 'Blitz',
+    blitzBase: 'Temps du premier tour',
+    blitzPenalty: 'Pénalité : −1 PV par seconde de dépassement',
+    blitzHint: '×1,5 à chaque tour de table, max 5 min',
     create: 'Créer la partie',
   },
   game: {
@@ -79,6 +85,20 @@ const fr: Translation = {
     unavailable: 'Recherche indisponible, tu peux jouer sans',
     artist: 'Illus. {{artist}}',
   },
+  turn: {
+    of: 'Au tour de {{name}}',
+    yours: 'À toi',
+    round: 'Tour {{n}}',
+    end: 'Fin de tour',
+    combat: '⚔ Combat',
+    endCombat: 'Fin du combat',
+    pause: 'Pause',
+    resume: 'Reprendre',
+    paused: 'En pause',
+    inCombat: 'Combat',
+    skipping: 'Passage au joueur suivant…',
+    penalty: '−{{n}} PV',
+  },
   screen: { scan: 'Scanne pour jouer', lobbyOf: 'Partie de {{name}} · {{life}} PV', finished: 'Partie terminée', watch: 'Scanne pour regarder' },
   errors: {
     invalid_name: 'Pseudo invalide (1 à 20 caractères).',
@@ -97,6 +117,9 @@ const fr: Translation = {
     too_many_games: 'Trop de parties en cours. Réessaie plus tard.',
     host_cannot_leave: "L'hôte ne peut pas quitter le salon.",
     invalid_starting_life: 'Points de vie de départ invalides.',
+    not_your_turn: "Ce n'est pas ton tour.",
+    blitz_only: 'Disponible uniquement en mode Blitz.',
+    invalid_blitz: 'Réglages Blitz invalides.',
   },
 }
 export default fr

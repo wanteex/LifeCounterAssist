@@ -10,7 +10,10 @@ namespace LifeCounterAssist.Api.Services;
 /// <param name="Name">Host display name.</param>
 /// <param name="StartingLife">Starting life total.</param>
 /// <param name="Commander">Host commander, if any.</param>
-public sealed record CreateGameRequest(string Name, int StartingLife = 40, CommanderInfo? Commander = null);
+/// <param name="Mode">How the game is played.</param>
+/// <param name="Blitz">Blitz options, if any.</param>
+public sealed record CreateGameRequest(
+    string Name, int StartingLife = 40, CommanderInfo? Commander = null, GameMode Mode = GameMode.Normal, BlitzSettings? Blitz = null);
 
 /// <summary>Request to join a game.</summary>
 /// <param name="Name">Display name.</param>
@@ -61,7 +64,7 @@ public sealed class GameService(IGameNotifier notifier, TimeProvider clock, ILog
 
         var gameId = Guid.NewGuid().ToString("N");
         var playerId = NewId();
-        var state = GameRules.Create(gameId, playerId, r.Name, r.StartingLife, clock.GetUtcNow(), r.Commander);
+        var state = GameRules.Create(gameId, playerId, r.Name, r.StartingLife, clock.GetUtcNow(), r.Commander, r.Mode, r.Blitz);
         var token = NewToken();
         _seats[gameId] = new Dictionary<string, string> { [token] = playerId };
         _locks[gameId] = new SemaphoreSlim(1, 1);
@@ -198,7 +201,10 @@ public sealed class GameService(IGameNotifier notifier, TimeProvider clock, ILog
             {
                 if (!_games.TryGetValue(id, out var current)) continue;
                 var copy = Clone(current);
-                if (GameRules.CompletePendingFinish(copy, now))
+                var changed = GameRules.CompletePendingFinish(copy, now);
+                changed |= GameRules.CompletePendingSkip(copy, now);
+                changed |= GameRules.ApplyTimePenalty(copy, now);
+                if (changed)
                 {
                     _games[id] = copy;
                     await BroadcastAsync(copy, ct);
@@ -265,8 +271,13 @@ public sealed class GameService(IGameNotifier notifier, TimeProvider clock, ILog
     private SemaphoreSlim GateFor(string gameId) =>
         _locks.TryGetValue(gameId, out var gate) ? gate : throw new NotFoundException("game_not_found");
 
-    private static GameState Clone(GameState state) =>
-        JsonSerializer.Deserialize<GameState>(JsonSerializer.Serialize(state, JsonDefaults.Options), JsonDefaults.Options)!;
+    // Every state leaving the service carries the server clock so devices can count the turn clock locally.
+    private GameState Clone(GameState state)
+    {
+        var copy = JsonSerializer.Deserialize<GameState>(JsonSerializer.Serialize(state, JsonDefaults.Options), JsonDefaults.Options)!;
+        copy.ServerTime = clock.GetUtcNow();
+        return copy;
+    }
 
     private static string NewId() => Guid.NewGuid().ToString("N")[..12];
 

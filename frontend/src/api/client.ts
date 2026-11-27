@@ -1,6 +1,6 @@
 import { config } from '../config'
 import { saveSeat, setLastCommander, setLastName } from '../seats'
-import type { Commander, GameState, GameSummary, SeatDto } from './types'
+import type { BlitzSettings, Commander, GameMode, GameState, GameSummary, SeatDto } from './types'
 
 /** Error carrying the backend business code (ProblemDetails `code` or HubException message). */
 export class ApiError extends Error {
@@ -50,8 +50,8 @@ function remember(seat: SeatDto, name: string, commander?: Commander | null) {
 export const api = {
   games: () => request<GameSummary[]>('GET', '/api/games'),
   game: (id: string) => request<GameState>('GET', `/api/games/${encodeURIComponent(id)}`),
-  createGame: async (name: string, startingLife: number, commander?: Commander | null) => {
-    const seat = await request<SeatDto>('POST', '/api/games', { name, startingLife, commander: commander ?? null })
+  createGame: async (name: string, startingLife: number, commander?: Commander | null, mode: GameMode = 'Normal', blitz?: BlitzSettings | null) => {
+    const seat = await request<SeatDto>('POST', '/api/games', { name, startingLife, commander: commander ?? null, mode, blitz: blitz ?? null })
     remember(seat, name, commander)
     return seat
   },

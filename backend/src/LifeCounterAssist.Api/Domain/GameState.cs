@@ -16,6 +16,53 @@ public enum GameStatus
     Cancelled,
 }
 
+/// <summary>How a game is played.</summary>
+public enum GameMode
+{
+    /// <summary>Free-for-all; the turn clock counts up without a limit.</summary>
+    Normal,
+
+    /// <summary>Each turn has a time limit that grows every round.</summary>
+    Blitz,
+}
+
+/// <summary>Blitz options chosen at creation.</summary>
+/// <param name="BaseSeconds">Turn limit of the first round.</param>
+/// <param name="Penalty">Whether each full second over the limit costs one life.</param>
+public sealed record BlitzSettings(int BaseSeconds, bool Penalty);
+
+/// <summary>Whose turn it is and how long it has lasted.</summary>
+/// <remarks>Time used = <see cref="ElapsedMs"/> plus, when running, the time since <see cref="RunningSince"/>.</remarks>
+public sealed class TurnState
+{
+    /// <summary>Gets or sets the player whose turn it is.</summary>
+    public required string ActivePlayerId { get; set; }
+
+    /// <summary>Gets or sets the round, starting at 1; it grows each time play goes round the table.</summary>
+    public int Round { get; set; } = 1;
+
+    /// <summary>Gets or sets the time already used this turn, excluding the running period.</summary>
+    public long ElapsedMs { get; set; }
+
+    /// <summary>Gets or sets when the clock last started; <see langword="null"/> while frozen.</summary>
+    public DateTimeOffset? RunningSince { get; set; }
+
+    /// <summary>Gets or sets a value indicating whether the combat phase freezes the clock (Blitz).</summary>
+    public bool Combat { get; set; }
+
+    /// <summary>Gets or sets a value indicating whether the host paused the clock (Blitz).</summary>
+    public bool Paused { get; set; }
+
+    /// <summary>Gets or sets the overtime seconds already charged this turn.</summary>
+    public int PenaltySeconds { get; set; }
+
+    /// <summary>Gets or sets when the turn passes because the active player is eliminated.</summary>
+    public DateTimeOffset? SkipAt { get; set; }
+
+    /// <summary>Gets or sets the time limit of this turn in seconds (Blitz), or <see langword="null"/>.</summary>
+    public int? LimitSeconds { get; set; }
+}
+
 /// <summary>Full shared state of a game, synchronized to every participant.</summary>
 public sealed class GameState
 {
@@ -30,6 +77,18 @@ public sealed class GameState
 
     /// <summary>Gets or sets the life total each player starts with.</summary>
     public int StartingLife { get; set; } = 40;
+
+    /// <summary>Gets or sets how the game is played.</summary>
+    public GameMode Mode { get; set; } = GameMode.Normal;
+
+    /// <summary>Gets or sets the Blitz options, or <see langword="null"/> in normal mode.</summary>
+    public BlitzSettings? Blitz { get; set; }
+
+    /// <summary>Gets or sets the turn tracking, or <see langword="null"/> before the game starts.</summary>
+    public TurnState? Turn { get; set; }
+
+    /// <summary>Gets or sets the server clock when this copy was sent, so devices can correct their own clock.</summary>
+    public DateTimeOffset ServerTime { get; set; }
 
     /// <summary>Gets or sets the creation date.</summary>
     public DateTimeOffset CreatedAt { get; set; }

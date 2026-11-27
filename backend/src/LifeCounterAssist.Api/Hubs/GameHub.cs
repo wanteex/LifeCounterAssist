@@ -132,6 +132,28 @@ public sealed class GameHub(GameService games, TimeProvider clock) : Hub
     public Task CancelPendingFinish(string gameId, string seatToken) =>
         games.ActAsync(gameId, seatToken, (s, p) => GameRules.CancelPendingFinish(s, p, clock.GetUtcNow()));
 
+    /// <summary>Ends the current turn (active player or host).</summary>
+    /// <param name="gameId">Game identifier.</param>
+    /// <param name="seatToken">Caller's seat token.</param>
+    /// <param name="expectedActivePlayerId">Player whose turn the caller sees; a stale tap does nothing.</param>
+    /// <returns>A task.</returns>
+    public Task EndTurn(string gameId, string seatToken, string expectedActivePlayerId) =>
+        games.ActAsync(gameId, seatToken, (s, p) => GameRules.EndTurn(s, p, clock.GetUtcNow(), expectedActivePlayerId));
+
+    /// <summary>Starts or ends the combat phase (Blitz; active player or host).</summary>
+    /// <param name="gameId">Game identifier.</param>
+    /// <param name="seatToken">Caller's seat token.</param>
+    /// <returns>A task.</returns>
+    public Task ToggleCombat(string gameId, string seatToken) =>
+        games.ActAsync(gameId, seatToken, (s, p) => GameRules.ToggleCombat(s, p, clock.GetUtcNow()));
+
+    /// <summary>Pauses or resumes the Blitz clock (host only).</summary>
+    /// <param name="gameId">Game identifier.</param>
+    /// <param name="seatToken">Caller's seat token.</param>
+    /// <returns>A task.</returns>
+    public Task TogglePause(string gameId, string seatToken) =>
+        games.ActAsync(gameId, seatToken, (s, p) => GameRules.TogglePause(s, p, clock.GetUtcNow()));
+
     /// <summary>Ends the game manually.</summary>
     /// <param name="gameId">Game identifier.</param>
     /// <param name="seatToken">Caller's seat token.</param>

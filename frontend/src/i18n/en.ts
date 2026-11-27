@@ -31,6 +31,12 @@ const en = {
     title: 'New game',
     yourName: 'Your name',
     startingLife: 'Starting life',
+    mode: 'Game mode',
+    modeNormal: 'Normal',
+    modeBlitz: 'Blitz',
+    blitzBase: 'First turn limit',
+    blitzPenalty: 'Penalty: −1 life per second over time',
+    blitzHint: '×1.5 every round around the table, up to 5 min',
     create: 'Create game',
   },
   game: {
@@ -78,6 +84,20 @@ const en = {
     unavailable: 'Search unavailable, you can play without one',
     artist: 'Art {{artist}}',
   },
+  turn: {
+    of: "{{name}}'s turn",
+    yours: 'Your turn',
+    round: 'Round {{n}}',
+    end: 'End turn',
+    combat: '⚔ Combat',
+    endCombat: 'End combat',
+    pause: 'Pause',
+    resume: 'Resume',
+    paused: 'Paused',
+    inCombat: 'Combat',
+    skipping: 'Passing to the next player…',
+    penalty: '−{{n}} life',
+  },
   screen: { scan: 'Scan to play', lobbyOf: "{{name}}'s game · {{life}} life", finished: 'Game over', watch: 'Scan to watch' },
   errors: {
     invalid_name: 'Invalid name (1 to 20 characters).',
@@ -96,6 +116,9 @@ const en = {
     too_many_games: 'Too many games are in progress. Try again later.',
     host_cannot_leave: 'The host cannot leave the lobby.',
     invalid_starting_life: 'Invalid starting life.',
+    not_your_turn: "It's not your turn.",
+    blitz_only: 'Only available in Blitz mode.',
+    invalid_blitz: 'Invalid Blitz settings.',
   },
 }
 export type Translation = typeof en

@@ -1,6 +1,7 @@
 import { useTranslation } from 'react-i18next'
 import type { GameState, PlayerState } from '../api/types'
 import { useRecentLifeChanges } from '../hooks/useOptimistic'
+import { clockText, useTurnClock, type TurnClock } from '../hooks/useTurnClock'
 import { CommanderBackdrop } from './CommanderBackdrop'
 import { FinishCountdown } from './FinishCountdown'
 
@@ -21,31 +22,65 @@ export function ScreenBoard({ game }: { game: GameState }) {
   const { cols, rows, cells } = tableLayout(game.players.length)
   const recent = useRecentLifeChanges(game)
   const names = Object.fromEntries(game.players.map((p) => [p.playerId, p.displayName]))
+  const clock = useTurnClock(game)
+  const turn = game.turn
+  const { t } = useTranslation()
+  const turnState = turn?.skipAt ? t('turn.skipping') : turn?.paused ? t('turn.paused') : turn?.combat ? t('turn.inCombat') : null
 
   return (
     <div className="flex h-dvh flex-col gap-3 p-3">
       <FinishCountdown game={game} />
+      {turn && (
+        <p className="text-center text-[clamp(1rem,3vh,2rem)] font-bold text-slate-300">
+          {t('turn.round', { n: turn.round })}
+          {game.mode === 'Blitz' && <span className="ml-3 text-amber-400">Blitz</span>}
+        </p>
+      )}
       <div
         className="grid min-h-0 flex-1 gap-3"
         style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`, gridTemplateRows: `repeat(${rows}, minmax(0, 1fr))` }}
       >
         {game.players.map((p, i) => (
-          <Tile key={p.playerId} player={p} recent={recent[p.playerId]} names={names} cell={cells[i]} />
+          <Tile
+            key={p.playerId}
+            player={p}
+            recent={recent[p.playerId]}
+            names={names}
+            cell={cells[i]}
+            clock={turn?.activePlayerId === p.playerId ? clock : null}
+            turnState={turnState}
+          />
         ))}
       </div>
     </div>
   )
 }
 
-function Tile({ player, recent, names, cell }: { player: PlayerState; recent?: number; names: Record<string, string>; cell: { row: number; col: number } }) {
+function Tile({
+  player,
+  recent,
+  names,
+  cell,
+  clock,
+  turnState,
+}: {
+  player: PlayerState
+  recent?: number
+  names: Record<string, string>
+  cell: { row: number; col: number }
+  /** Turn clock when this player is the active one. */
+  clock: TurnClock | null
+  turnState: string | null
+}) {
   const { t } = useTranslation()
   const out = player.isEliminated || player.conceded
+  const overtime = !!clock?.overtime && !clock.frozen
   const damage = Object.entries(player.commanderDamage).filter(([, v]) => v > 0)
   return (
     <div
-      className={`relative flex min-h-0 flex-col items-center justify-center overflow-hidden rounded-3xl p-2 ring-1 ${
-        out ? 'bg-slate-900/50 text-slate-500 opacity-50 ring-slate-800' : 'bg-slate-800 text-slate-100 ring-slate-700'
-      }`}
+      className={`relative flex min-h-0 flex-col items-center justify-center overflow-hidden rounded-3xl p-2 ${
+        out ? 'bg-slate-900/50 text-slate-500 opacity-50' : 'bg-slate-800 text-slate-100'
+      } ${clock ? (overtime ? 'animate-pulse ring-8 ring-red-500' : 'ring-8 ring-amber-400') : out ? 'ring-1 ring-slate-800' : 'ring-1 ring-slate-700'}`}
       style={{ gridRow: cell.row, gridColumn: cell.col }}
     >
       <CommanderBackdrop commander={player.commander} credit="text-[clamp(0.7rem,1.6vh,1rem)]" />
@@ -64,6 +99,16 @@ function Tile({ player, recent, names, cell }: { player: PlayerState; recent?: n
           </span>
         ))}
       </div>
+      {clock && (
+        <p
+          className={`relative font-mono font-black tabular-nums text-[clamp(1.5rem,6vh,4.5rem)] drop-shadow ${
+            clock.frozen ? 'text-slate-400' : overtime ? 'text-red-300' : 'text-amber-300'
+          }`}
+        >
+          {clockText(clock)}
+          {turnState && <span className="ml-3 text-[clamp(1rem,3vh,2rem)] font-sans font-bold">{turnState}</span>}
+        </p>
+      )}
       {out && <p className="relative text-[clamp(1rem,3vh,2rem)] text-rose-400">{player.conceded ? t('game.conceded') : t('game.eliminated')}</p>}
     </div>
   )

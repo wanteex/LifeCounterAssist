@@ -39,4 +39,51 @@ public static partial class GameRules
             LimitSeconds = state.Blitz is { } b ? TurnLimitSeconds(b.BaseSeconds, 1) : null,
         };
     }
+
+    /// <summary>Ends the current turn; play passes to the next player still in the game.</summary>
+    /// <param name="state">Game state.</param>
+    /// <param name="actor">Must be the active player or the host.</param>
+    /// <param name="now">Current time.</param>
+    /// <exception cref="ForbiddenException">Thrown when the actor is neither the active player nor the host.</exception>
+    /// <exception cref="DomainException">Thrown when the game is not in progress.</exception>
+    public static void EndTurn(GameState state, string actor, DateTimeOffset now)
+    {
+        var turn = EnsureTurnActor(state, actor);
+        AdvanceTurn(state, turn, actor, now, "turn_ended");
+    }
+
+    private static TurnState EnsureTurnActor(GameState state, string actor)
+    {
+        EnsureInProgress(state);
+        var turn = state.Turn ?? throw new DomainException("game_not_in_progress");
+        if (actor != turn.ActivePlayerId && actor != state.HostPlayerId) throw new ForbiddenException("not_your_turn");
+        return turn;
+    }
+
+    /// <summary>Gives the turn to the next seat still in the game, clockwise; going past the last seat starts a new round.</summary>
+    private static void AdvanceTurn(GameState state, TurnState turn, string actor, DateTimeOffset now, string logMessage)
+    {
+        var n = state.Players.Count;
+        var i = state.Players.FindIndex(p => p.PlayerId == turn.ActivePlayerId);
+        var next = i;
+        var wrapped = true;
+        for (var k = 1; k < n; k++)
+        {
+            var candidate = state.Players[(i + k) % n];
+            if (candidate.IsEliminated) continue;
+            next = (i + k) % n;
+            wrapped = i + k >= n;
+            break;
+        }
+
+        if (wrapped) turn.Round++;
+        turn.ActivePlayerId = state.Players[next].PlayerId;
+        turn.ElapsedMs = 0;
+        turn.PenaltySeconds = 0;
+        turn.Combat = false;
+        turn.SkipAt = null;
+        turn.RunningSince = turn.Paused ? null : now;
+        turn.LimitSeconds = state.Blitz is { } b ? TurnLimitSeconds(b.BaseSeconds, turn.Round) : null;
+        AddLog(state, new GameLogEntry(now, actor, logMessage, turn.ActivePlayerId), now);
+    }
 }

@@ -86,4 +86,83 @@ public class TurnRulesTests
 
     [Fact]
     public void Start_Blitz_SetsLimitOfRoundOne() => Assert.Equal(30, Blitz().Turn!.LimitSeconds);
+
+    // Task 2
+
+    private static void Kill(GameState s, string id, DateTimeOffset now) => GameRules.AdjustLife(s, "p1", id, -40, now);
+
+    [Fact]
+    public void EndTurn_PassesToNextSeat()
+    {
+        var s = Started();
+        GameRules.EndTurn(s, "p1", At(10));
+        Assert.Equal("p2", s.Turn!.ActivePlayerId);
+        Assert.Equal(1, s.Turn.Round);
+    }
+
+    [Fact]
+    public void EndTurn_WrapIncrementsRound()
+    {
+        var s = Started();
+        GameRules.EndTurn(s, "p1", At(1));
+        GameRules.EndTurn(s, "p2", At(2));
+        GameRules.EndTurn(s, "p3", At(3));
+        Assert.Equal("p1", s.Turn!.ActivePlayerId);
+        Assert.Equal(2, s.Turn.Round);
+    }
+
+    [Fact]
+    public void EndTurn_SkipsEliminatedSeats()
+    {
+        var s = Started();
+        Kill(s, "p2", Now);
+        GameRules.EndTurn(s, "p1", At(1));
+        Assert.Equal("p3", s.Turn!.ActivePlayerId);
+    }
+
+    [Fact]
+    public void EndTurn_ByHostWhenNotActive_Allowed()
+    {
+        var s = Started();
+        GameRules.EndTurn(s, "p1", At(1));
+        GameRules.EndTurn(s, "p1", At(2));
+        Assert.Equal("p3", s.Turn!.ActivePlayerId);
+    }
+
+    [Fact]
+    public void EndTurn_ByOtherPlayer_Forbidden()
+    {
+        var s = Started();
+        var ex = Assert.Throws<ForbiddenException>(() => GameRules.EndTurn(s, "p2", At(1)));
+        Assert.Equal("not_your_turn", ex.Code);
+    }
+
+    [Fact]
+    public void EndTurn_ResetsClockAndCombat()
+    {
+        var s = Blitz();
+        s.Turn!.Combat = true;
+        GameRules.EndTurn(s, "p1", At(10));
+        Assert.Equal(0, s.Turn!.ElapsedMs);
+        Assert.Equal(At(10), s.Turn.RunningSince);
+        Assert.False(s.Turn.Combat);
+    }
+
+    [Fact]
+    public void EndTurn_Blitz_NewRoundRaisesLimit()
+    {
+        var s = Blitz(players: 2);
+        GameRules.EndTurn(s, "p1", At(1));
+        GameRules.EndTurn(s, "p2", At(2));
+        Assert.Equal(2, s.Turn!.Round);
+        Assert.Equal(45, s.Turn.LimitSeconds);
+    }
+
+    [Fact]
+    public void EndTurn_NotInProgress_Throws()
+    {
+        var s = NewGame();
+        var ex = Assert.Throws<DomainException>(() => GameRules.EndTurn(s, "p1", Now));
+        Assert.Equal("game_not_in_progress", ex.Code);
+    }
 }

@@ -330,4 +330,84 @@ public class TurnRulesTests
         Assert.Equal("p2", s.Turn!.ActivePlayerId);
         Assert.Null(s.Turn.RunningSince);
     }
+
+    // Task 5
+
+    private static int Life(GameState s, string id) => s.FindPlayer(id)!.Life;
+
+    [Fact]
+    public void Penalty_Off_NoLifeLoss()
+    {
+        var s = Blitz(15, penalty: false);
+        Assert.False(GameRules.ApplyTimePenalty(s, At(20)));
+        Assert.Equal(40, Life(s, "p1"));
+    }
+
+    [Fact]
+    public void Penalty_Normal_NoLifeLoss()
+    {
+        var s = Started();
+        Assert.False(GameRules.ApplyTimePenalty(s, At(500)));
+        Assert.Equal(40, Life(s, "p1"));
+    }
+
+    [Fact]
+    public void Penalty_TakesOnePerFullSecond()
+    {
+        var s = Blitz(15, penalty: true);
+        Assert.False(GameRules.ApplyTimePenalty(s, At(15.5)));
+        Assert.True(GameRules.ApplyTimePenalty(s, At(17.2)));
+        Assert.Equal(38, Life(s, "p1"));
+        Assert.Equal(2, s.Turn!.PenaltySeconds);
+        Assert.Equal("time_penalty", s.Log[^1].Message);
+        Assert.Equal(-2, s.Log[^1].Value);
+    }
+
+    [Fact]
+    public void Penalty_SameSecondTwice_NotDoubled()
+    {
+        var s = Blitz(15, penalty: true);
+        GameRules.ApplyTimePenalty(s, At(17.2));
+        Assert.False(GameRules.ApplyTimePenalty(s, At(17.9)));
+        Assert.Equal(38, Life(s, "p1"));
+    }
+
+    [Fact]
+    public void Penalty_NotDuringCombat()
+    {
+        var s = Blitz(15, penalty: true);
+        GameRules.ToggleCombat(s, "p1", At(10));
+        Assert.False(GameRules.ApplyTimePenalty(s, At(40)));
+        Assert.Equal(40, Life(s, "p1"));
+    }
+
+    [Fact]
+    public void Penalty_ResetsOnNewTurn()
+    {
+        var s = Blitz(15, penalty: true);
+        GameRules.ApplyTimePenalty(s, At(18));
+        GameRules.EndTurn(s, "p1", At(18));
+        Assert.Equal(0, s.Turn!.PenaltySeconds);
+        Assert.False(GameRules.ApplyTimePenalty(s, At(30)));
+    }
+
+    [Fact]
+    public void Penalty_DoesNotTouchAckSeq()
+    {
+        var s = Blitz(15, penalty: true);
+        GameRules.Acknowledge(s, "p1", 7);
+        GameRules.ApplyTimePenalty(s, At(20));
+        Assert.Equal(7, s.FindPlayer("p1")!.AckSeq);
+    }
+
+    [Fact]
+    public void Penalty_LethalSchedulesSkip()
+    {
+        var s = Blitz(15, penalty: true);
+        GameRules.AdjustLife(s, "p1", "p1", -39, At(1));
+        GameRules.ApplyTimePenalty(s, At(16));
+        Assert.Equal(0, Life(s, "p1"));
+        Assert.Equal(At(16) + GameRules.TurnSkipDelay, s.Turn!.SkipAt);
+        Assert.Null(s.Turn.RunningSince);
+    }
 }

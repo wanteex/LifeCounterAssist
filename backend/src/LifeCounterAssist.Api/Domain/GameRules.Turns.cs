@@ -161,4 +161,27 @@ public static partial class GameRules
         AdvanceTurn(state, turn, turn.ActivePlayerId, now, "turn_skipped");
         return true;
     }
+
+    /// <summary>Charges the active player one life per full second over the Blitz limit, when the penalty is on.</summary>
+    /// <param name="state">Game state.</param>
+    /// <param name="now">Current time.</param>
+    /// <returns><see langword="true"/> when life was taken.</returns>
+    public static bool ApplyTimePenalty(GameState state, DateTimeOffset now)
+    {
+        if (state.Status != GameStatus.InProgress
+            || state.Blitz is not { Penalty: true }
+            || state.Turn is not { RunningSince: not null, LimitSeconds: { } limit } turn)
+            return false;
+
+        var over = (int)((UsedMs(turn, now) - limit * 1000L) / 1000);
+        if (over <= turn.PenaltySeconds) return false;
+
+        var lost = over - turn.PenaltySeconds;
+        turn.PenaltySeconds = over;
+        var player = GetPlayer(state, turn.ActivePlayerId);
+        player.Life -= lost;
+        AddLog(state, new GameLogEntry(now, turn.ActivePlayerId, "time_penalty", turn.ActivePlayerId, -lost), now);
+        RefreshPendingFinish(state, now);
+        return true;
+    }
 }

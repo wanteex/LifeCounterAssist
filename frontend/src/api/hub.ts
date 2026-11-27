@@ -94,6 +94,8 @@ export const gameHub = {
   startGame: (gameId: string, seatToken: string) => invoke('StartGame', gameId, seatToken),
   cancelGame: (gameId: string, seatToken: string) => invoke('CancelGame', gameId, seatToken),
   leaveGame: (gameId: string, seatToken: string) => invoke('LeaveGame', gameId, seatToken),
+  movePlayer: (gameId: string, seatToken: string, playerId: string, offset: 1 | -1) =>
+    invoke('MovePlayer', gameId, seatToken, playerId, offset),
   adjustLife: (gameId: string, seatToken: string, targetPlayerId: string, delta: number, seq: number) =>
     invoke('AdjustLife', gameId, seatToken, targetPlayerId, delta, seq),
   adjustCommanderDamage: (gameId: string, seatToken: string, targetPlayerId: string, sourcePlayerId: string, delta: number, seq: number) =>

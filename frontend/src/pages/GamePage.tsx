@@ -159,6 +159,7 @@ export function GamePage() {
           onStart={() => void run((tk) => gameHub.startGame(id, tk))}
           onCancel={() => void run((tk) => gameHub.cancelGame(id, tk))}
           onLeave={() => void leave()}
+          onMove={(pid, offset) => void run((tk) => gameHub.movePlayer(id, tk, pid, offset))}
         />
         {!me && <Button onClick={() => setSheetOpen(true)}>{t('home.join')}</Button>}
       </>

@@ -30,7 +30,7 @@ export function GameBoard({
   const { t } = useTranslation()
   const [detailsId, setDetailsId] = useState<string | null>(null)
   const [confirming, setConfirming] = useState(false)
-  const others = game.players.filter((p) => p.playerId !== me?.playerId)
+  const others = seatsAfter(game.players, me?.playerId)
   const details = game.players.find((p) => p.playerId === detailsId) ?? null
 
   return (
@@ -89,4 +89,10 @@ export function GameBoard({
       <PlayerDetails game={game} player={details} actions={actions} onClose={() => setDetailsId(null)} />
     </div>
   )
+}
+
+/** Other players in table order, starting with the seat after `myId` (everyone in seat order when not seated). */
+export function seatsAfter<T extends { playerId: string }>(players: T[], myId?: string | null): T[] {
+  const i = players.findIndex((p) => p.playerId === myId)
+  return i < 0 ? players : [...players.slice(i + 1), ...players.slice(0, i)]
 }

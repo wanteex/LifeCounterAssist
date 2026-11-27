@@ -49,6 +49,15 @@ public sealed class GameHub(GameService games, TimeProvider clock) : Hub
     public Task StartGame(string gameId, string seatToken) =>
         games.ActAsync(gameId, seatToken, (s, p) => GameRules.Start(s, p, clock.GetUtcNow()));
 
+    /// <summary>Moves a player one seat around the table (host only, lobby only).</summary>
+    /// <param name="gameId">Game identifier.</param>
+    /// <param name="seatToken">Caller's seat token.</param>
+    /// <param name="playerId">Player to move.</param>
+    /// <param name="offset">-1 for one seat earlier, +1 for one seat later.</param>
+    /// <returns>A task.</returns>
+    public Task MovePlayer(string gameId, string seatToken, string playerId, int offset) =>
+        games.ActAsync(gameId, seatToken, (s, p) => GameRules.MovePlayer(s, p, playerId, offset, clock.GetUtcNow()));
+
     /// <summary>Cancels the game.</summary>
     /// <param name="gameId">Game identifier.</param>
     /// <param name="seatToken">Caller's seat token.</param>

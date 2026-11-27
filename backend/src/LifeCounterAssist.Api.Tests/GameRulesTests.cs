@@ -417,4 +417,68 @@ public class GameRulesTests
         GameRules.Acknowledge(s, "nobody", 5);
         Assert.All(s.Players, p => Assert.Equal(0, p.AckSeq));
     }
+
+    private static string[] Order(GameState s) => s.Players.Select(p => p.PlayerId).ToArray();
+
+    [Fact]
+    public void MovePlayer_Down_SwapsWithNextSeat()
+    {
+        var s = NewGame(3);
+        GameRules.MovePlayer(s, "p1", "p1", 1, Now);
+        Assert.Equal(["p2", "p1", "p3"], Order(s));
+    }
+
+    [Fact]
+    public void MovePlayer_Up_SwapsWithPreviousSeat()
+    {
+        var s = NewGame(3);
+        GameRules.MovePlayer(s, "p1", "p3", -1, Now);
+        Assert.Equal(["p1", "p3", "p2"], Order(s));
+    }
+
+    [Theory]
+    [InlineData("p1", -1)]
+    [InlineData("p3", 1)]
+    public void MovePlayer_PastTheEnds_DoesNothing(string player, int offset)
+    {
+        var s = NewGame(3);
+        var version = s.Version;
+        GameRules.MovePlayer(s, "p1", player, offset, Now);
+        Assert.Equal(["p1", "p2", "p3"], Order(s));
+        Assert.Equal(version, s.Version);
+    }
+
+    [Fact]
+    public void MovePlayer_ByNonHost_IsForbidden()
+    {
+        var s = NewGame(3);
+        var ex = Assert.Throws<ForbiddenException>(() => GameRules.MovePlayer(s, "p2", "p3", -1, Now));
+        Assert.Equal("host_only", ex.Code);
+    }
+
+    [Fact]
+    public void MovePlayer_AfterStart_IsRejected()
+    {
+        var s = Started(3);
+        var ex = Assert.Throws<DomainException>(() => GameRules.MovePlayer(s, "p1", "p2", 1, Now));
+        Assert.Equal("game_already_started", ex.Code);
+    }
+
+    [Fact]
+    public void MovePlayer_UnknownPlayer_IsRejected()
+    {
+        var s = NewGame(3);
+        var ex = Assert.ThrowsAny<DomainException>(() => GameRules.MovePlayer(s, "p1", "zz", 1, Now));
+        Assert.Equal("player_not_found", ex.Code);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(2)]
+    [InlineData(-2)]
+    public void MovePlayer_OnlyMovesOneSeat(int offset)
+    {
+        var s = NewGame(3);
+        Assert.Throws<DomainException>(() => GameRules.MovePlayer(s, "p1", "p2", offset, Now));
+    }
 }

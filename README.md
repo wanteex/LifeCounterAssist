@@ -99,9 +99,13 @@ Run workflow ─► runner ARM GitHub : build + push ghcr.io
 
 ### Mise en place (une seule fois)
 
-Sur la Pi (Raspberry Pi OS 64 bits, Docker installé, SSH actif) :
+Sur la Pi (OS 64 bits, Docker et son plugin Compose installés, SSH actif) :
 
 ```bash
+# Plugin Compose (la commande `docker compose`) si `docker compose version` échoue
+sudo apt install -y docker-compose-v2      # Ubuntu, paquet docker.io
+# sudo apt install -y docker-compose-plugin  # Docker installé depuis le dépôt officiel (docker-ce)
+
 # Utilisateur de déploiement dans le groupe docker
 sudo adduser --disabled-password --gecos "" deploy
 sudo usermod -aG docker deploy
@@ -118,14 +122,15 @@ sudo tailscale funnel --bg 8080
 
 Dans la console Tailscale :
 
-1. Politique d'accès : déclarer le tag et autoriser SSH vers la Pi.
+1. Access controls : déclarer le tag, nommer la Pi par son IP Tailscale (page Machines) et autoriser SSH vers elle. Une cible de règle ne peut pas être un nom de machine, d'où l'alias `hosts`. Avec la règle par défaut qui autorise tout, seul `tagOwners` est nécessaire.
 
    ```json
    "tagOwners": { "tag:ci": ["autogroup:admin"] },
-   "grants": [{ "src": ["tag:ci"], "dst": ["<nom-de-la-pi>"], "ip": ["22"] }]
+   "hosts": { "pi": "100.x.y.z" },
+   "grants": [{ "src": ["tag:ci"], "dst": ["pi"], "ip": ["22"] }]
    ```
 
-2. Settings > OAuth clients : créer un client avec l'écriture sur **Auth Keys** et le tag `tag:ci`.
+2. Settings > Trust credentials : créer un identifiant de type OAuth avec l'écriture sur **Auth Keys** et le tag `tag:ci` (le tag n'est proposé qu'une fois `tagOwners` enregistré).
 
 Dans GitHub, Settings > Secrets and variables > Actions, créer :
 
@@ -133,13 +138,15 @@ Dans GitHub, Settings > Secrets and variables > Actions, créer :
 |-----------------------|-----------------------------------------------------------|
 | `TS_OAUTH_CLIENT_ID`  | ID du client OAuth Tailscale                              |
 | `TS_OAUTH_SECRET`     | Secret du client OAuth Tailscale                          |
-| `PI_HOST`             | Nom MagicDNS de la Pi sur le tailnet (ex. `raspberrypi`) |
+| `PI_HOST`             | Nom complet de la Pi (`<nom>.<tailnet>.ts.net`) ou son IP Tailscale |
 | `PI_USER`             | `deploy`                                                  |
 | `PI_SSH_KEY`          | Contenu du fichier `deploy_key` (clé privée)             |
 
 Puis supprimer `deploy_key` et `deploy_key.pub` de la Pi.
 
-Après le premier lancement du workflow, rendre l'image publique pour que la Pi la télécharge sans identifiants : profil GitHub > Packages > `lifecounterassist` > Package settings > Change visibility > Public.
+La Pi télécharge l'image sans identifiants : le package GHCR doit être public. Lié à ce dépôt public, il l'est normalement dès le premier build ; sinon, profil GitHub > Packages > `lifecounterassist` > Package settings > Change visibility > Public, puis relancer le job de déploiement.
+
+Pour lancer un déploiement : onglet Actions > **Deploy to Raspberry Pi** > **Run workflow**. En cas d'échec d'un seul job, **Re-run failed jobs** relance le déploiement sans refaire le build.
 
 L'écran de salle est sur `https://<nom-de-la-pi>.<tailnet>.ts.net/ecran` : le QR code reprend l'adresse de la page, il pointe donc sur l'URL publique.
 

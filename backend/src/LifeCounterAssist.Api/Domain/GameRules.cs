@@ -144,6 +144,29 @@ public static class GameRules
             AddLog(state, new GameLogEntry(now, playerId, "left"), now);
     }
 
+    /// <summary>Moves a player one seat earlier or later around the table (host only, lobby only).</summary>
+    /// <remarks>Seat order is clockwise around the physical table; moving past either end does nothing.</remarks>
+    /// <param name="state">Game state.</param>
+    /// <param name="actorPlayerId">Must be the host.</param>
+    /// <param name="playerId">Player to move.</param>
+    /// <param name="offset">-1 for one seat earlier, +1 for one seat later.</param>
+    /// <param name="now">Current time.</param>
+    /// <exception cref="ForbiddenException">Thrown when the actor is not the host.</exception>
+    /// <exception cref="DomainException">Thrown when the game started, the offset is not ±1 or the player is unknown.</exception>
+    public static void MovePlayer(GameState state, string actorPlayerId, string playerId, int offset, DateTimeOffset now)
+    {
+        if (actorPlayerId != state.HostPlayerId) throw new ForbiddenException("host_only");
+        if (state.Status != GameStatus.Lobby) throw new DomainException("game_already_started");
+        if (offset is not (1 or -1)) throw new DomainException("invalid_move");
+
+        var from = state.Players.IndexOf(GetPlayer(state, playerId));
+        var to = from + offset;
+        if (to < 0 || to >= state.Players.Count) return;
+
+        (state.Players[from], state.Players[to]) = (state.Players[to], state.Players[from]);
+        AddLog(state, new GameLogEntry(now, actorPlayerId, "moved", playerId, offset), now);
+    }
+
     /// <summary>Cancels a lobby game (host only).</summary>
     /// <param name="state">Game state.</param>
     /// <param name="actorPlayerId">Must be the host.</param>

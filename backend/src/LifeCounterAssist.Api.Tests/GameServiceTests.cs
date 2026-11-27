@@ -348,4 +348,69 @@ public class GameServiceTests
         Assert.Equal(30, broadcast.Life);
         Assert.Equal(42, broadcast.AckSeq);
     }
+
+    // Turn tracking and Blitz
+
+    private async Task<SeatDto> StartedBlitzAsync(BlitzSettings blitz)
+    {
+        var seat = await _service.CreateAsync(new CreateGameRequest("Host", Mode: GameMode.Blitz, Blitz: blitz));
+        await _service.JoinAsync(seat.Game.Id, new JoinGameRequest("Guest"));
+        await _service.JoinAsync(seat.Game.Id, new JoinGameRequest("Third"));
+        await _service.ActAsync(seat.Game.Id, seat.SeatToken, (s, p) => GameRules.Start(s, p, _clock.GetUtcNow()));
+        return seat;
+    }
+
+    [Fact]
+    public async Task Create_WithBlitz_StoresSettings()
+    {
+        var seat = await _service.CreateAsync(new CreateGameRequest("Host", Mode: GameMode.Blitz, Blitz: new BlitzSettings(15, true)));
+        Assert.Equal(GameMode.Blitz, seat.Game.Mode);
+        Assert.Equal(new BlitzSettings(15, true), seat.Game.Blitz);
+    }
+
+    [Fact]
+    public async Task Get_StampsServerTime()
+    {
+        var seat = await _service.CreateAsync(new CreateGameRequest("Host"));
+        _clock.Advance(TimeSpan.FromSeconds(42));
+        Assert.Equal(_clock.GetUtcNow(), _service.Get(seat.Game.Id).ServerTime);
+    }
+
+    [Fact]
+    public async Task Broadcast_StampsServerTime()
+    {
+        await _service.CreateAsync(new CreateGameRequest("Host"));
+        Assert.Equal(_clock.GetUtcNow(), _notifier.Updated[^1].ServerTime);
+    }
+
+    [Fact]
+    public async Task Tick_AppliesPenaltyAndBroadcasts()
+    {
+        var seat = await StartedBlitzAsync(new BlitzSettings(15, true));
+        var before = _notifier.Updated.Count;
+        _clock.Advance(TimeSpan.FromSeconds(17));
+        await _service.TickAsync();
+        Assert.Equal(38, _service.Get(seat.Game.Id).FindPlayer(seat.PlayerId)!.Life);
+        Assert.Equal(before + 1, _notifier.Updated.Count);
+    }
+
+    [Fact]
+    public async Task Tick_CompletesPendingSkip()
+    {
+        var seat = await StartedBlitzAsync(new BlitzSettings(30, false));
+        await _service.ActAsync(seat.Game.Id, seat.SeatToken, (s, p) => GameRules.AdjustLife(s, p, p, -40, _clock.GetUtcNow()));
+        _clock.Advance(GameRules.TurnSkipDelay);
+        await _service.TickAsync();
+        Assert.NotEqual(seat.PlayerId, _service.Get(seat.Game.Id).Turn!.ActivePlayerId);
+    }
+
+    [Fact]
+    public async Task Tick_NothingDue_NoBroadcast()
+    {
+        await StartedBlitzAsync(new BlitzSettings(30, true));
+        var before = _notifier.Updated.Count;
+        _clock.Advance(TimeSpan.FromSeconds(5));
+        await _service.TickAsync();
+        Assert.Equal(before, _notifier.Updated.Count);
+    }
 }

@@ -201,7 +201,10 @@ public sealed class GameService(IGameNotifier notifier, TimeProvider clock, ILog
             {
                 if (!_games.TryGetValue(id, out var current)) continue;
                 var copy = Clone(current);
-                if (GameRules.CompletePendingFinish(copy, now))
+                var changed = GameRules.CompletePendingFinish(copy, now);
+                changed |= GameRules.CompletePendingSkip(copy, now);
+                changed |= GameRules.ApplyTimePenalty(copy, now);
+                if (changed)
                 {
                     _games[id] = copy;
                     await BroadcastAsync(copy, ct);
@@ -268,8 +271,13 @@ public sealed class GameService(IGameNotifier notifier, TimeProvider clock, ILog
     private SemaphoreSlim GateFor(string gameId) =>
         _locks.TryGetValue(gameId, out var gate) ? gate : throw new NotFoundException("game_not_found");
 
-    private static GameState Clone(GameState state) =>
-        JsonSerializer.Deserialize<GameState>(JsonSerializer.Serialize(state, JsonDefaults.Options), JsonDefaults.Options)!;
+    // Every state leaving the service carries the server clock so devices can count the turn clock locally.
+    private GameState Clone(GameState state)
+    {
+        var copy = JsonSerializer.Deserialize<GameState>(JsonSerializer.Serialize(state, JsonDefaults.Options), JsonDefaults.Options)!;
+        copy.ServerTime = clock.GetUtcNow();
+        return copy;
+    }
 
     private static string NewId() => Guid.NewGuid().ToString("N")[..12];
 

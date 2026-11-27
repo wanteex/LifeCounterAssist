@@ -4,10 +4,22 @@ import type { GameState } from '../api/types'
 import { ScreenBoard } from '../components/ScreenBoard'
 import { useScreenFeed } from '../hooks/useScreenFeed'
 
-function Qr({ className }: { className: string }) {
+function Qr({ className, url = window.location.origin }: { className: string; url?: string }) {
   return (
-    <div className={`aspect-square rounded-2xl bg-white p-3 ${className}`}>
-      <QRCodeSVG value={window.location.origin} className="h-full w-full" />
+    <div className={`aspect-square rounded-2xl bg-white ${className}`}>
+      <QRCodeSVG value={url} className="h-full w-full" />
+    </div>
+  )
+}
+
+/** Small corner QR code opening the running game in spectator mode. */
+function WatchQr({ gameId }: { gameId: string }) {
+  const { t } = useTranslation()
+  const url = `${window.location.origin}/parties/${encodeURIComponent(gameId)}?spectateur`
+  return (
+    <div className="fixed bottom-3 right-3 z-10 flex flex-col items-center gap-1 rounded-2xl bg-slate-950/80 p-2 shadow-lg">
+      <Qr className="h-[14vh] p-1.5" url={url} />
+      <span className="text-[clamp(0.75rem,1.8vh,1.25rem)] font-semibold text-slate-200">{t('screen.watch')}</span>
     </div>
   )
 }
@@ -29,7 +41,10 @@ export function ScreenPage() {
       ) : game.status === 'Lobby' ? (
         <Lobby game={game} />
       ) : game.status === 'InProgress' ? (
-        <ScreenBoard game={game} />
+        <>
+          <ScreenBoard game={game} />
+          <WatchQr gameId={game.id} />
+        </>
       ) : (
         <Finished game={game} />
       )}
@@ -41,7 +56,7 @@ function Idle() {
   const { t } = useTranslation()
   return (
     <div className="flex h-full flex-col items-center justify-center gap-6 p-6">
-      <Qr className="h-[60vh]" />
+      <Qr className="h-[60vh] p-3" />
       <p className="text-[clamp(2rem,6vh,4rem)] font-black text-amber-400">{t('screen.scan')}</p>
     </div>
   )
@@ -60,7 +75,7 @@ function Lobby({ game }: { game: GameState }) {
           <li key={p.playerId}>{p.displayName}</li>
         ))}
       </ul>
-      <Qr className="absolute bottom-6 right-6 h-[25vh]" />
+      <Qr className="absolute bottom-6 right-6 h-[25vh] p-3" />
     </div>
   )
 }

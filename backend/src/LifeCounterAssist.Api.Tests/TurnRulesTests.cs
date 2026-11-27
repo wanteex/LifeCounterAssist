@@ -255,4 +255,79 @@ public class TurnRulesTests
         Assert.Null(s.Turn!.RunningSince);
         Assert.Equal(3000, s.Turn.ElapsedMs);
     }
+
+    // Task 4
+
+    [Fact]
+    public void ActiveEliminated_SchedulesSkipAndFreezes()
+    {
+        var s = Started();
+        Kill(s, "p1", Now);
+        Assert.Equal(Now + GameRules.TurnSkipDelay, s.Turn!.SkipAt);
+        Assert.Null(s.Turn.RunningSince);
+    }
+
+    [Fact]
+    public void ActiveRevived_CancelsSkip_ClockResumes()
+    {
+        var s = Started();
+        Kill(s, "p1", At(1));
+        GameRules.AdjustLife(s, "p1", "p1", 40, At(3));
+        Assert.Null(s.Turn!.SkipAt);
+        Assert.Equal(At(3), s.Turn.RunningSince);
+        Assert.Equal(1000, s.Turn.ElapsedMs);
+    }
+
+    [Fact]
+    public void CompletePendingSkip_BeforeDelay_NoOp()
+    {
+        var s = Started();
+        Kill(s, "p1", Now);
+        Assert.False(GameRules.CompletePendingSkip(s, At(4)));
+        Assert.Equal("p1", s.Turn!.ActivePlayerId);
+    }
+
+    [Fact]
+    public void CompletePendingSkip_AfterDelay_Advances()
+    {
+        var s = Started();
+        Kill(s, "p1", Now);
+        Assert.True(GameRules.CompletePendingSkip(s, At(5)));
+        Assert.Equal("p2", s.Turn!.ActivePlayerId);
+        Assert.Null(s.Turn.SkipAt);
+        Assert.Equal(At(5), s.Turn.RunningSince);
+        Assert.Equal("turn_skipped", s.Log[^1].Message);
+    }
+
+    [Fact]
+    public void CompletePendingSkip_NothingPending_False() => Assert.False(GameRules.CompletePendingSkip(Started(), At(60)));
+
+    [Fact]
+    public void HostEndTurn_WhilePendingSkip_MovesOneSeat()
+    {
+        var s = Started();
+        Kill(s, "p1", Now);
+        GameRules.EndTurn(s, "p1", At(1));
+        Assert.Equal("p2", s.Turn!.ActivePlayerId);
+        Assert.Null(s.Turn.SkipAt);
+        Assert.Equal(At(1), s.Turn.RunningSince);
+    }
+
+    [Fact]
+    public void ConcedeActive_SchedulesSkip()
+    {
+        var s = Started();
+        GameRules.ToggleConcede(s, "p1", "p1", At(2));
+        Assert.Equal(At(2) + GameRules.TurnSkipDelay, s.Turn!.SkipAt);
+    }
+
+    [Fact]
+    public void ActiveEliminated_LastOpponentStanding_SkipsToSurvivor()
+    {
+        var s = Started(players: 2);
+        Kill(s, "p1", Now);
+        Assert.True(GameRules.CompletePendingSkip(s, At(5)));
+        Assert.Equal("p2", s.Turn!.ActivePlayerId);
+        Assert.Null(s.Turn.RunningSince);
+    }
 }

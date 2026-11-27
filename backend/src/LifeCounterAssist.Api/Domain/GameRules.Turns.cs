@@ -128,6 +128,11 @@ public static partial class GameRules
         if (state.Turn is not { } turn) return;
         var active = state.FindPlayer(turn.ActivePlayerId);
         var alive = state.Players.Count(p => !p.IsEliminated);
+        if (state.Status == GameStatus.InProgress && active is { IsEliminated: true } && alive >= 1)
+            turn.SkipAt ??= now + TurnSkipDelay;
+        else
+            turn.SkipAt = null;
+
         var shouldRun = state.Status == GameStatus.InProgress
             && !turn.Combat
             && !turn.Paused
@@ -145,4 +150,15 @@ public static partial class GameRules
 
     private static long UsedMs(TurnState turn, DateTimeOffset now) =>
         turn.ElapsedMs + (turn.RunningSince is { } since ? (long)(now - since).TotalMilliseconds : 0);
+
+    /// <summary>Passes the turn of an eliminated active player once <see cref="TurnSkipDelay"/> has elapsed.</summary>
+    /// <param name="state">Game state.</param>
+    /// <param name="now">Current time.</param>
+    /// <returns><see langword="true"/> when the turn has just passed.</returns>
+    public static bool CompletePendingSkip(GameState state, DateTimeOffset now)
+    {
+        if (state.Status != GameStatus.InProgress || state.Turn is not { SkipAt: { } at } turn || at > now) return false;
+        AdvanceTurn(state, turn, turn.ActivePlayerId, now, "turn_skipped");
+        return true;
+    }
 }

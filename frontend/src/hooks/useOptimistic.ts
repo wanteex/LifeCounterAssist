@@ -1,34 +1,49 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { GameState } from '../api/types'
 
-/**
- * Keeps local deltas applied on top of server state until the server acknowledges them,
- * so taps feel instant even with network latency.
- */
-export function usePendingDeltas(onError: (error: unknown) => void) {
-  const [pending, setPending] = useState<Record<string, number>>({})
+interface PendingAction {
+  seq: number
+  key: string
+  delta: number
+}
 
-  const bump = (key: string, delta: number) =>
-    setPending((current) => {
-      const value = (current[key] ?? 0) + delta
-      const next = { ...current }
-      if (value === 0) delete next[key]
-      else next[key] = value
-      return next
-    })
+// Increases across reloads on the same device, so a fresh page never reuses an acknowledged number.
+let lastSeq = Date.now()
+const nextSeq = () => (lastSeq = Math.max(lastSeq + 1, Date.now()))
+
+/**
+ * Keeps local deltas applied on top of server state until a server state includes them,
+ * so taps feel instant even with network latency.
+ *
+ * Each action carries a sequence number; the server records the highest one it applied for the
+ * player (`ackSeq`). A delta counts only while its number is above `ackSeq`, so it is never shown
+ * twice or dropped early, whichever of the state update and the invocation result arrives first.
+ */
+export function usePendingDeltas(ackSeq: number, onError: (error: unknown) => void) {
+  const [pending, setPending] = useState<PendingAction[]>([])
+
+  // Forget actions the server state already includes.
+  useEffect(() => {
+    setPending((current) => (current.some((a) => a.seq <= ackSeq) ? current.filter((a) => a.seq > ackSeq) : current))
+  }, [ackSeq])
 
   const apply = useCallback(
-    (key: string, delta: number, send: () => Promise<unknown>) => {
-      bump(key, delta)
-      // The server broadcasts GameUpdated before completing the invocation, so the delta is already in state here.
-      send()
-        .catch(onError)
-        .finally(() => bump(key, -delta))
+    (key: string, delta: number, send: (seq: number) => Promise<unknown>) => {
+      const seq = nextSeq()
+      setPending((current) => [...current, { seq, key, delta }])
+      send(seq).catch((error) => {
+        // Rejected: the server never applied it.
+        setPending((current) => current.filter((a) => a.seq !== seq))
+        onError(error)
+      })
     },
     [onError],
   )
 
-  const get = useCallback((key: string) => pending[key] ?? 0, [pending])
+  const get = useCallback(
+    (key: string) => pending.reduce((sum, a) => (a.key === key && a.seq > ackSeq ? sum + a.delta : sum), 0),
+    [pending, ackSeq],
+  )
   return { apply, get }
 }
 

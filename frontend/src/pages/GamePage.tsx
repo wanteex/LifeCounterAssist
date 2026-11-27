@@ -57,7 +57,8 @@ export function GamePage() {
     [id],
   )
 
-  const { apply, get } = usePendingDeltas(onError)
+  const ackSeq = (seat && game?.players.find((p) => p.playerId === seat.playerId)?.ackSeq) || 0
+  const { apply, get } = usePendingDeltas(ackSeq, onError)
   const recent = useRecentLifeChanges(game)
 
   const me = (game && seat && game.players.find((p) => p.playerId === seat.playerId)) || null
@@ -92,15 +93,15 @@ export function GamePage() {
     }
   }
 
-  const adjust = (key: string, delta: number, send: (token: string) => Promise<unknown>) => {
-    if (seat) apply(key, delta, () => send(seat.seatToken))
+  const adjust = (key: string, delta: number, send: (token: string, seq: number) => Promise<unknown>) => {
+    if (seat) apply(key, delta, (seq) => send(seat.seatToken, seq))
   }
 
   const actions: CounterActions = {
-    adjustLife: (pid, d) => adjust(`life:${pid}`, d, (tk) => gameHub.adjustLife(id, tk, pid, d)),
-    adjustPoison: (pid, d) => adjust(`poison:${pid}`, d, (tk) => gameHub.adjustPoison(id, tk, pid, d)),
+    adjustLife: (pid, d) => adjust(`life:${pid}`, d, (tk, seq) => gameHub.adjustLife(id, tk, pid, d, seq)),
+    adjustPoison: (pid, d) => adjust(`poison:${pid}`, d, (tk, seq) => gameHub.adjustPoison(id, tk, pid, d, seq)),
     adjustCommander: (target, source, d) =>
-      adjust(`cmd:${target}:${source}`, d, (tk) => gameHub.adjustCommanderDamage(id, tk, target, source, d)),
+      adjust(`cmd:${target}:${source}`, d, (tk, seq) => gameHub.adjustCommanderDamage(id, tk, target, source, d, seq)),
     pendingLife: (pid) => get(`life:${pid}`),
     pendingPoison: (pid) => get(`poison:${pid}`),
     pendingCommander: (target, source) => get(`cmd:${target}:${source}`),

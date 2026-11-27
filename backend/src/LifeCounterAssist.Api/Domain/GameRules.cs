@@ -121,6 +121,16 @@ public static class GameRules
         return (player, false);
     }
 
+    /// <summary>Records that the actor's counter action with the given sequence number is applied.</summary>
+    /// <param name="state">Game state.</param>
+    /// <param name="playerId">Player who sent the action.</param>
+    /// <param name="seq">Client-side sequence number of the action; never moves backwards.</param>
+    public static void Acknowledge(GameState state, string playerId, long seq)
+    {
+        var player = state.FindPlayer(playerId);
+        if (player is not null && seq > player.AckSeq) player.AckSeq = seq;
+    }
+
     /// <summary>Removes a player from a lobby. The host cannot leave.</summary>
     /// <param name="state">Game state.</param>
     /// <param name="playerId">Player leaving.</param>

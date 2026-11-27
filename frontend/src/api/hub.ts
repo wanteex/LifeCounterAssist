@@ -94,12 +94,12 @@ export const gameHub = {
   startGame: (gameId: string, seatToken: string) => invoke('StartGame', gameId, seatToken),
   cancelGame: (gameId: string, seatToken: string) => invoke('CancelGame', gameId, seatToken),
   leaveGame: (gameId: string, seatToken: string) => invoke('LeaveGame', gameId, seatToken),
-  adjustLife: (gameId: string, seatToken: string, targetPlayerId: string, delta: number) =>
-    invoke('AdjustLife', gameId, seatToken, targetPlayerId, delta),
-  adjustCommanderDamage: (gameId: string, seatToken: string, targetPlayerId: string, sourcePlayerId: string, delta: number) =>
-    invoke('AdjustCommanderDamage', gameId, seatToken, targetPlayerId, sourcePlayerId, delta),
-  adjustPoison: (gameId: string, seatToken: string, targetPlayerId: string, delta: number) =>
-    invoke('AdjustPoison', gameId, seatToken, targetPlayerId, delta),
+  adjustLife: (gameId: string, seatToken: string, targetPlayerId: string, delta: number, seq: number) =>
+    invoke('AdjustLife', gameId, seatToken, targetPlayerId, delta, seq),
+  adjustCommanderDamage: (gameId: string, seatToken: string, targetPlayerId: string, sourcePlayerId: string, delta: number, seq: number) =>
+    invoke('AdjustCommanderDamage', gameId, seatToken, targetPlayerId, sourcePlayerId, delta, seq),
+  adjustPoison: (gameId: string, seatToken: string, targetPlayerId: string, delta: number, seq: number) =>
+    invoke('AdjustPoison', gameId, seatToken, targetPlayerId, delta, seq),
   toggleConcede: (gameId: string, seatToken: string, targetPlayerId: string) =>
     invoke('ToggleConcede', gameId, seatToken, targetPlayerId),
   cancelPendingFinish: (gameId: string, seatToken: string) => invoke('CancelPendingFinish', gameId, seatToken),

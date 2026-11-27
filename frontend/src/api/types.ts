@@ -20,6 +20,8 @@ export interface PlayerState {
   commanderDamage: Record<string, number>
   conceded: boolean
   isEliminated: boolean
+  /** Highest counter-action sequence number from this player's device included in this state. */
+  ackSeq: number
   commander?: Commander | null
 }
 

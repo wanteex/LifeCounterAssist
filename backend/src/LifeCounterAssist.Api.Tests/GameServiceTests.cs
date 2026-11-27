@@ -333,4 +333,19 @@ public class GameServiceTests
 
         Assert.Equal(before, _notifier.Updated.Count);
     }
+
+    [Fact]
+    public async Task Act_AcknowledgedSequence_IsInTheBroadcastState()
+    {
+        var host = await StartedGameAsync();
+        await _service.ActAsync(host.Game.Id, host.SeatToken, (s, p) =>
+        {
+            GameRules.AdjustLife(s, p, p, -10, _clock.GetUtcNow());
+            GameRules.Acknowledge(s, p, 42);
+        });
+
+        var broadcast = _notifier.Updated[^1].FindPlayer(host.PlayerId)!;
+        Assert.Equal(30, broadcast.Life);
+        Assert.Equal(42, broadcast.AckSeq);
+    }
 }

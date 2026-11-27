@@ -391,4 +391,30 @@ public class GameRulesTests
         Assert.Throws<DomainException>(() => GameRules.Join(s, "p2", "Bob", Now, new CommanderInfo("X", "https://evil/x", "")));
         Assert.Single(s.Players);
     }
+
+    [Fact]
+    public void Acknowledge_RecordsTheActionSequenceOnTheActor()
+    {
+        var s = Started();
+        GameRules.Acknowledge(s, "p2", 1_700_000_000_123);
+        Assert.Equal(1_700_000_000_123, s.FindPlayer("p2")!.AckSeq);
+        Assert.Equal(0, s.FindPlayer("p1")!.AckSeq);
+    }
+
+    [Fact]
+    public void Acknowledge_NeverMovesBackwards()
+    {
+        var s = Started();
+        GameRules.Acknowledge(s, "p1", 50);
+        GameRules.Acknowledge(s, "p1", 20);
+        Assert.Equal(50, s.FindPlayer("p1")!.AckSeq);
+    }
+
+    [Fact]
+    public void Acknowledge_UnknownPlayer_DoesNothing()
+    {
+        var s = Started();
+        GameRules.Acknowledge(s, "nobody", 5);
+        Assert.All(s.Players, p => Assert.Equal(0, p.AckSeq));
+    }
 }

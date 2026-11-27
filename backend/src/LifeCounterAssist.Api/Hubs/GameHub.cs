@@ -68,10 +68,14 @@ public sealed class GameHub(GameService games, TimeProvider clock) : Hub
     /// <param name="seatToken">Caller's seat token.</param>
     /// <param name="targetPlayerId">Player whose life changes.</param>
     /// <param name="delta">Signed delta, clamped to plus or minus 100.</param>
+    /// <param name="seq">Client sequence number of this action, acknowledged in the state.</param>
     /// <returns>A task.</returns>
-    public Task AdjustLife(string gameId, string seatToken, string targetPlayerId, int delta) =>
+    public Task AdjustLife(string gameId, string seatToken, string targetPlayerId, int delta, long seq) =>
         games.ActAsync(gameId, seatToken, (s, p) =>
-            GameRules.AdjustLife(s, p, targetPlayerId, Clamp(delta), clock.GetUtcNow()));
+        {
+            GameRules.AdjustLife(s, p, targetPlayerId, Clamp(delta), clock.GetUtcNow());
+            GameRules.Acknowledge(s, p, seq);
+        });
 
     /// <summary>Adjusts commander damage.</summary>
     /// <param name="gameId">Game identifier.</param>
@@ -79,21 +83,29 @@ public sealed class GameHub(GameService games, TimeProvider clock) : Hub
     /// <param name="targetPlayerId">Player receiving damage.</param>
     /// <param name="sourcePlayerId">Owner of the commander dealing damage.</param>
     /// <param name="delta">Signed delta, clamped to plus or minus 100.</param>
+    /// <param name="seq">Client sequence number of this action, acknowledged in the state.</param>
     /// <returns>A task.</returns>
     public Task AdjustCommanderDamage(
-        string gameId, string seatToken, string targetPlayerId, string sourcePlayerId, int delta) =>
+        string gameId, string seatToken, string targetPlayerId, string sourcePlayerId, int delta, long seq) =>
         games.ActAsync(gameId, seatToken, (s, p) =>
-            GameRules.AdjustCommanderDamage(s, p, targetPlayerId, sourcePlayerId, Clamp(delta), clock.GetUtcNow()));
+        {
+            GameRules.AdjustCommanderDamage(s, p, targetPlayerId, sourcePlayerId, Clamp(delta), clock.GetUtcNow());
+            GameRules.Acknowledge(s, p, seq);
+        });
 
     /// <summary>Adjusts poison counters.</summary>
     /// <param name="gameId">Game identifier.</param>
     /// <param name="seatToken">Caller's seat token.</param>
     /// <param name="targetPlayerId">Player whose counter changes.</param>
     /// <param name="delta">Signed delta, clamped to plus or minus 100.</param>
+    /// <param name="seq">Client sequence number of this action, acknowledged in the state.</param>
     /// <returns>A task.</returns>
-    public Task AdjustPoison(string gameId, string seatToken, string targetPlayerId, int delta) =>
+    public Task AdjustPoison(string gameId, string seatToken, string targetPlayerId, int delta, long seq) =>
         games.ActAsync(gameId, seatToken, (s, p) =>
-            GameRules.AdjustPoison(s, p, targetPlayerId, Clamp(delta), clock.GetUtcNow()));
+        {
+            GameRules.AdjustPoison(s, p, targetPlayerId, Clamp(delta), clock.GetUtcNow());
+            GameRules.Acknowledge(s, p, seq);
+        });
 
     /// <summary>Toggles a player's concession.</summary>
     /// <param name="gameId">Game identifier.</param>

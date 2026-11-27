@@ -97,6 +97,12 @@ public sealed class PlayerState
     /// <summary>Gets or sets a value indicating whether the player conceded.</summary>
     public bool Conceded { get; set; }
 
+    /// <summary>
+    /// Gets or sets the highest counter-action sequence number from this player's device that this state includes.
+    /// The device hides its optimistic deltas up to this number, whatever order messages arrive in.
+    /// </summary>
+    public long AckSeq { get; set; }
+
     /// <summary>Gets or sets the commander the player chose, if any.</summary>
     public CommanderInfo? Commander { get; set; }
 

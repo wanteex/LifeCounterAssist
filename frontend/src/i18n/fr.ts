@@ -40,6 +40,7 @@ const fr: Translation = {
     start: 'Démarrer',
     cancelGame: 'Annuler la partie',
     leave: 'Quitter',
+    invite: 'Fais scanner pour rejoindre',
     onlyHostStarts: "En attente du lancement par l'hôte.",
     host: 'hôte',
     cancelled: 'Cette partie a été annulée.',

@@ -39,6 +39,7 @@ const en = {
     start: 'Start',
     cancelGame: 'Cancel game',
     leave: 'Leave',
+    invite: 'Let others scan to join',
     onlyHostStarts: 'Waiting for the host to start the game.',
     host: 'host',
     cancelled: 'This game was cancelled.',
